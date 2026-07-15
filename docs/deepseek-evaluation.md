@@ -15,7 +15,7 @@
 - `src/evaluation.ts` 只订阅 `AgentSessionEvent` 并读取 `getSessionStats()`，不介入消息或工具执行。
 - `src/eval.ts` 通过产品 CLI 跑真实链路，不直接拼 DeepSeek HTTP 请求。
 - `--ephemeral` 使用 Pi `SessionManager.inMemory()`，评测不会污染日常 JSONL 会话。
-- `repair-js` 只在系统临时目录自动批准 write/edit；Bash 始终拒绝，测试由评测器执行，结束后删除 fixture。
+- `repair-js` 与 `repair-multi-file` 只在系统临时目录自动批准 write/edit；Bash 始终拒绝，测试由评测器执行，结束后删除 fixture。
 - 自动化只用事件替身和内存对象；真实 API 必须显式增加 `--live`。
 
 设计推断：稳定的产品优化应当建立在同一任务、同一模型、同一 thinking 档位和多次样本上。单次 smoke 只能证明链路可用，不能证明模型或档位更优。
@@ -33,6 +33,19 @@
 
 不把 temperature、top_p 当作 thinking 调优旋钮；不默认启用 Beta strict mode 或 FIM。
 
+### 2.1 Claude Code 与 Codex CLI 的产品参考
+
+本项目只借鉴与当前本地评测直接相关的边界，不复制完整命令集合。2026-07-15 核对本机 Claude Code `2.1.210`、Codex CLI `0.144.1` 及官方文档后，采纳以下原则：
+
+| 参考能力 | 官方依据 | 本项目取舍 |
+|---|---|---|
+| 非交互执行与流式 JSON | [Claude Code CLI reference](https://docs.anthropic.com/en/docs/claude-code/cli-usage) 的 print/output-format；[Codex CLI reference](https://developers.openai.com/codex/cli/reference) 的 exec/JSON | `npm run eval` 输出 NDJSON；每次请求是 `eval_result`，最后是 `eval_summary` |
+| 结构化最终结果 | Claude `--json-schema`；Codex `--output-schema` | 当前由确定性评测器生成固定 Schema，不要求模型自己声明成功 |
+| 成本/工作量边界 | Claude `--max-budget-usd`、`--max-turns` | 增加 `--max-cost-usd`；它按 Provider 已返回的累计 usage 在请求间停止，不伪称能预知单次请求成本 |
+| 权限与隔离 | Claude allowed/disallowed tools、permission mode；Codex workspace-write sandbox 与 ephemeral | repair 运行在临时目录，只批准 write/edit，拒绝 Bash；使用 Pi 内存 Session，不污染日常会话 |
+
+暂不实现 Claude 的 Plan Mode 或 Codex 的完整 sandbox profile。前者需要明确设计“只读计划 → 用户确认 → 执行”的会话状态转换，后者需要 OS 级执行后端；把它们压进当前评测器会混淆产品策略与真正的系统隔离。
+
 ## 3. 使用方式
 
 先构建，然后查看评测计划。默认命令不会调用 API：
@@ -45,7 +58,7 @@ npm run eval -- --task all --model deepseek-v4-flash --thinking high
 显式运行真实评测：
 
 ```bash
-npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --runs 1
+npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --runs 1 --max-cost-usd 0.02
 ```
 
 对比档位或模型时分开执行，保留每行 NDJSON 结果：
@@ -55,7 +68,9 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking max --run
 npm run eval -- --live --task all --model deepseek-v4-pro --thinking high --runs 3
 ```
 
-`--runs` 限制为 1–5。Pro 必须显式选择，不存在自动升级。建议先 dry-run 检查 `requestCount`，再决定是否付费执行。
+`--runs` 限制为 1–5。Pro 必须显式选择，不存在自动升级。建议先 dry-run 检查 `requestCount` 和 `maxCostUsd`，再决定是否付费执行。默认上限为 0.02 美元；累计已知成本达到上限后不再开始下一次请求，最终超过上限则汇总失败。由于真实成本只能在一次请求完成并返回 usage 后计算，这是一条请求间的观测边界，不是 Provider 侧预授权的硬预算。
+
+输出协议固定为 NDJSON：dry-run 只有一条 `eval_plan`；真实执行每个样本一条 `eval_result`，最后一条 `eval_summary`。汇总包含计划/完成/通过/失败数量、累计成本、预算是否超出及停止原因，不记录完整 reasoning、工具结果或凭据。
 
 一次性 CLI 也可单独输出指标：
 
@@ -72,9 +87,10 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | `exact` | deny | 最终文本严格等于 `EVAL_OK` | 最小生成、reasoning/text 流 |
 | `read-package` | auto-read | 调用工具成功且严格返回 package name | Tool Call、Schema、结果回填 |
 | `missing-file-recovery` | auto-read | 工具失败且最终严格返回 `RECOVERED` | 错误结果回填和模型恢复 |
-| `repair-js` | 临时目录内 write/edit | 测试通过、测试文件未变、源码已变、最终文本为 `FIXED` | 读代码、真实修改和确定性外部评分 |
+| `repair-js` | 临时目录内 write/edit | Agent/工具成功、测试通过、测试文件未变、源码已变 | 读代码、真实修改和确定性外部评分 |
+| `repair-multi-file` | 临时目录内 write/edit | Agent/工具成功、两个目标源码都改变、原文件无缺失、入口和测试不变、无额外文件、测试通过 | 多文件定位、完整执行和防止投机修改 |
 
-前三项是低成本协议基线；`repair-js` 是第一项真实编码 fixture，但仍不足以代表复杂项目质量。后续应增加多文件修复、失败测试反馈、长上下文恢复和 Compaction 任务。修改类任务继续只在隔离目录执行。
+前三项是低成本协议基线，最终输出保持全文严格匹配。repair 链路可能在工具轮次间产生可见的解释文本，因此模型文本只作为短诊断摘要，不参与通过判定；正确性由 Agent/工具状态、文件完整性和外部测试共同决定。两个 repair fixture 验证单文件和多文件真实修改，但仍不足以代表复杂项目质量。后续应增加失败测试反馈、长上下文恢复和 Compaction 任务。修改类任务继续只在隔离目录执行。
 
 ## 5. 指标定义
 
@@ -121,8 +137,9 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | Flash / max / exact | 通过 | 744 ms | 1049 ms | 0% | $0.00011578 |
 | Pro / high / exact | 通过 | 835 ms | 1209 ms | 0% | $0.00032277 |
 | Flash / high / repair-js | 通过，3 次工具成功，外部测试通过 | 1142 ms | 4212 ms | 68.95% | $0.0009056432 |
+| Flash / high / repair-multi-file | 通过，6 次工具成功，两个目标文件修改且外部测试通过 | 1045 ms | 7579 ms | 88.71% | $0.0005783456 |
 
-事实：6 次 smoke 均通过，Flash/high 的协议工具任务和隔离修复都完成了预期循环；修复任务还确认测试通过、测试文件未变且源码发生变化。推断限制：样本量为 1，且缓存状态不同，不能据此比较 high/max 或 Flash/Pro 的优劣。正式对比至少应每格运行 3 次，并报告中位数、离散程度、通过率和缓存状态。
+事实：既有 6 次 smoke 与新增多文件 smoke 均完成预期链路；多文件任务确认两个目标源码都改变、受保护文件不变、没有额外文件且测试通过。新增任务最初两次预验证也完成了正确修改，却因为模型在工具轮次间输出了解释文本而被“全文必须等于 FIXED”误判失败；评测器随后改为协议任务严格验证文本、编码任务由外部状态裁决。这个调整没有放宽文件或测试条件。推断限制：每个最终样本量仍为 1，且缓存状态不同，不能据此比较 high/max 或 Flash/Pro 的优劣。正式对比至少应每格运行 3 次，并报告中位数、离散程度、通过率和缓存状态。
 
 ## 8. 优化准入与回滚
 
@@ -136,7 +153,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 ## 9. 下一步
 
-- 将 repair fixture 扩展为多文件修改和“首次测试失败 → 读取反馈 → 二次修复”，但仍不开放无人值守 Bash。
+- 增加“首次测试失败 → 把受控反馈交还 Agent → 二次修复”的 evaluator-owned 循环，但仍不开放无人值守 Bash。
 - 为 TUI 的错误分类增加更紧凑的 80 列卡片布局。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。

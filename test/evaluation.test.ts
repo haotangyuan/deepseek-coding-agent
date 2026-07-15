@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSessionEvent, SessionStats } from "@earendil-works/pi-coding-agent";
-import { parseEvalArgs } from "../src/eval.ts";
+import { parseEvalArgs, summarizeEval, verifyRepairFiles } from "../src/eval.ts";
 import { EvaluationMetricsCollector } from "../src/evaluation.ts";
 
 const partial = {
@@ -23,13 +23,77 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
     thinking: "high",
     task: "all",
     runs: 1,
+    maxCostUsd: 0.02,
   });
   assert.equal(parseEvalArgs(["--live", "--task", "exact", "--runs=2", "--thinking=max"]).live, true);
   assert.equal(parseEvalArgs(["--task", "repair-js"]).task, "repair-js");
+  assert.equal(parseEvalArgs(["--task", "repair-multi-file", "--max-cost-usd=0.5"]).maxCostUsd, 0.5);
   assert.throws(() => parseEvalArgs(["--model", "openai/gpt-5"]), /only allows the deepseek provider/i);
   assert.throws(() => parseEvalArgs(["--model", "deepseek/"]), /Model ID cannot be empty/);
   assert.throws(() => parseEvalArgs(["--thinking", "medium"]), /Invalid thinking level/);
   assert.throws(() => parseEvalArgs(["--runs", "6"]), /1 to 5/);
+  assert.throws(() => parseEvalArgs(["--max-cost-usd", "0"]), /greater than 0/);
+  assert.throws(() => parseEvalArgs(["--max-cost-usd", "2"]), /at most 1/);
+});
+
+test("repair verification requires every expected edit and preserves protected files", () => {
+  const fixture = {
+    files: { "src/a.mjs": "bad-a", "src/b.mjs": "bad-b", "test/a.test.mjs": "tests" },
+    expectedChangedFiles: ["src/a.mjs", "src/b.mjs"],
+    protectedFiles: ["test/a.test.mjs"],
+  };
+  assert.deepEqual(verifyRepairFiles(fixture, {
+    "src/a.mjs": "fixed-a",
+    "src/b.mjs": "fixed-b",
+    "test/a.test.mjs": "tests",
+  }, true), {
+    testPassed: true,
+    protectedFilesUnchanged: true,
+    expectedFilesChanged: true,
+    allFixtureFilesPresent: true,
+    noUnexpectedFiles: true,
+    changedFiles: ["src/a.mjs", "src/b.mjs"],
+    missingFiles: [],
+    unexpectedFiles: [],
+  });
+  const invalid = verifyRepairFiles(fixture, {
+    "src/a.mjs": "fixed-a",
+    "src/b.mjs": "bad-b",
+    "test/a.test.mjs": "changed tests",
+    "notes.txt": "unexpected",
+  }, false);
+  assert.equal(invalid.testPassed, false);
+  assert.equal(invalid.protectedFilesUnchanged, false);
+  assert.equal(invalid.expectedFilesChanged, false);
+  assert.equal(invalid.allFixtureFilesPresent, true);
+  assert.equal(invalid.noUnexpectedFiles, false);
+  const deleted = verifyRepairFiles(fixture, {
+    "src/a.mjs": "fixed-a",
+    "test/a.test.mjs": "tests",
+  }, true);
+  assert.equal(deleted.expectedFilesChanged, false);
+  assert.equal(deleted.allFixtureFilesPresent, false);
+  assert.deepEqual(deleted.missingFiles, ["src/b.mjs"]);
+});
+
+test("evaluation summary reports pass, cost, and budget stop", () => {
+  const passed = { type: "eval_result", schemaVersion: 1, passed: true, metrics: { costUsd: 0.005 } };
+  assert.deepEqual(summarizeEval(1, [passed], 0.02), {
+    type: "eval_summary",
+    schemaVersion: 1,
+    passed: true,
+    plannedRequests: 1,
+    completedRequests: 1,
+    passedRequests: 1,
+    failedRequests: 0,
+    costUsd: 0.005,
+    maxCostUsd: 0.02,
+    budgetExceeded: false,
+  });
+  const stopped = summarizeEval(2, [{ ...passed, metrics: { costUsd: 0.015 } }], 0.01);
+  assert.equal(stopped.passed, false);
+  assert.equal(stopped.stoppedReason, "cost_limit");
+  assert.equal(summarizeEval(1, [{ ...passed, metrics: { costUsd: 0.03 } }], 0.02).budgetExceeded, true);
 });
 
 test("metrics collector records latency, reasoning, tools, cache and ordered event categories", () => {

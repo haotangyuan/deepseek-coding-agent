@@ -330,7 +330,7 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-15）：**评测与错误诊断基线已完成，优化实验进行中。** 已加入 `--thinking off|high|max`、`--metrics`、`--ephemeral`，建立 3 个低成本协议任务和 1 个隔离修复任务。指标覆盖首响应、首文本、总耗时、reasoning 字符、工具成功/错误、重试、Provider 错误分类、token、cache hit、成本和事件序列。官方 400/401/402/422/429/500/503 诊断已有自动化测试，仍由 Pi 决定和执行重试。6 次受控 smoke 均通过；因每格仅 1 个样本，不据此宣称 high/max 或 Flash/Pro 性能差异。详见 `docs/deepseek-evaluation.md`。
+当前进展（2026-07-15）：**评测与错误诊断基线已完成，优化实验进行中。** 已加入 `--thinking off|high|max`、`--metrics`、`--ephemeral`，建立 3 个低成本协议任务、单文件与多文件隔离修复任务。评测输出版本化 NDJSON 结果/汇总，并以 `--max-cost-usd` 在请求间限制累计已知成本。指标覆盖首响应、首文本、总耗时、reasoning 字符、工具成功/错误、重试、Provider 错误分类、token、cache hit、成本和事件序列。官方 400/401/402/422/429/500/503 诊断已有自动化测试，仍由 Pi 决定和执行重试。既有 6 次受控 smoke 与新增多文件 smoke 均通过；编码任务改由外部状态裁决，避免把工具轮次间的解释文本误当失败。因每格仅 1 个最终样本，不据此宣称 high/max 或 Flash/Pro 性能差异。详见 `docs/deepseek-evaluation.md`。
 
 实验方向：
 
@@ -353,6 +353,8 @@ flowchart TB
 ### M7：本地评测与面试演示
 
 目标：让项目不仅“能运行”，还能够稳定证明设计价值。
+
+产品参考边界：借鉴 Claude Code 的预算、工具 allow/deny 和计划/执行分层，以及 Codex CLI 的非交互 exec、结构化输出、ephemeral 与 workspace 隔离理念。当前已落地临时工作区、最小工具授权、NDJSON 结果和观测成本上限；Plan Mode 与 OS 级 sandbox 需要独立设计，不在评测脚本中伪实现。
 
 固定演示场景：
 
@@ -488,10 +490,13 @@ npm test
 | D-019 | 单次 smoke 只证明链路可用，不作为优化结论 | 已采纳 | 缓存状态和随机性会显著影响延迟、token 与成本 |
 | D-020 | DeepSeek 错误分类不接管 Pi 重试 | 已采纳 | 保持唯一重试状态机，只在产品层增加可行动提示 |
 | D-021 | repair 评测只自动批准临时目录 write/edit | 已采纳 | 能验证真实修改，同时不授予模型无人值守 Shell 权限 |
+| D-022 | 借鉴 Claude/Codex 的 CLI 原则而不复制命令面 | 已采纳 | 先落地非交互、结构化输出、临时工作区和预算边界；Plan Mode 与 OS sandbox 独立演进 |
+| D-023 | 评测成本上限按已返回 usage 在请求间执行 | 已采纳 | 单次请求成本无法预知，明确为观测边界，超限在汇总中失败 |
 
 ### 更新日志
 
 - **2026-07-15：** 完成 M6 错误诊断与首个 repair fixture。加入官方错误分类、TUI/CLI 可行动提示，以及临时目录中的读取、修改、测试和完整性评分。
+- **2026-07-15：** 参考 Claude Code/Codex CLI 增强本地评测。加入多文件修复、受保护文件与额外文件检查、版本化 NDJSON 汇总和请求间成本边界。
 - **2026-07-15：** 建立 M6 评测基线。加入显式 thinking、内存评测 Session、结构化指标、3 个固定任务和 Flash/Pro 受控 smoke；优化实验继续进行。
 - **2026-07-15：** 完成 M5。加入 Pi JSONL 持久会话、continue/resume、标题与列表、树导航、fork/clone、Compaction 和安全退出。
 - **2026-07-15：** 完成 M4。加入上下文快照、AGENTS/Skills/Prompts 命令、项目资源热重载、显式资源调用和深海蓝 TUI 视觉。
