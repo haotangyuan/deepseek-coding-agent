@@ -14,6 +14,7 @@ import {
   parseInteractiveCommand,
 } from "../src/interactive.ts";
 import type { ContextSnapshot } from "../src/context-resources.ts";
+import type { SessionControls } from "../src/sessions.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type ThinkingLevel = InteractiveSession["thinkingLevel"];
@@ -56,6 +57,7 @@ class FakeTerminal implements Terminal {
 
 class FakeSession implements InteractiveSession {
   isStreaming = false;
+  get isIdle(): boolean { return !this.isStreaming; }
   thinkingLevel: ThinkingLevel = "high";
   systemPrompt = "system prompt";
   model: SelectedModel;
@@ -114,6 +116,8 @@ class FakeSession implements InteractiveSession {
     this.isStreaming = false;
   }
 
+  async waitForIdle(): Promise<void> {}
+
   async setModel(model: SelectedModel): Promise<void> {
     this.model = model;
   }
@@ -169,6 +173,56 @@ function createSnapshot(): ContextSnapshot {
   };
 }
 
+function createSessionControls(): SessionControls & {
+  names: string[];
+  compactions: Array<string | undefined>;
+  navigations: string[];
+  compactionAborts: number;
+} {
+  const names: string[] = [];
+  const compactions: Array<string | undefined> = [];
+  const navigations: string[] = [];
+  const controls = {
+    names,
+    compactions,
+    navigations,
+    compactionAborts: 0,
+    snapshot: () => ({
+      id: "session-test-id",
+      name: names.at(-1),
+      file: "/tmp/session-test-id.jsonl",
+      persisted: true,
+      autoCompaction: true,
+      compacting: false,
+    }),
+    list: async () => [{
+      id: "session-test-id",
+      name: names.at(-1),
+      created: new Date("2026-07-15T00:00:00Z"),
+      modified: new Date("2026-07-15T01:00:00Z"),
+      messageCount: 6,
+      firstMessage: "first task",
+      cwd: process.cwd(),
+      model: "deepseek/deepseek-v4-flash",
+      path: "/tmp/session-test-id.jsonl",
+    }],
+    setName: (name: string) => { names.push(name); },
+    compact: async (instructions?: string) => {
+      compactions.push(instructions);
+      return { summary: "kept goal", firstKeptEntryId: "entry-2", tokensBefore: 100, estimatedTokensAfter: 20 };
+    },
+    abortCompaction: () => { controls.compactionAborts += 1; },
+    tree: () => [{ id: "entry-1", parentId: null, depth: 0, type: "message", preview: "user: first task", isLeaf: true }],
+    navigate: async (entryId: string) => {
+      navigations.push(entryId);
+      return { cancelled: false };
+    },
+    fork: () => ({ id: "forked-id", file: "/tmp/forked.jsonl" }),
+    clone: () => ({ id: "cloned-id", file: "/tmp/cloned.jsonl" }),
+  };
+  return controls;
+}
+
 function joinForTest(path: string): string {
   return `${process.cwd()}/${path}`;
 }
@@ -196,11 +250,13 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   const terminal = new FakeTerminal();
   let clears = 0;
   const snapshot = createSnapshot();
+  const sessionControls = createSessionControls();
   const mode = new InteractiveMode({
     session,
     modelRegistry: registry,
     cwd: process.cwd(),
     approvalMode: "ask",
+    sessionControls,
     terminal,
     clearContext: () => { clears += 1; },
     getContextSnapshot: () => snapshot,
@@ -301,6 +357,27 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   assert.equal(snapshot.projectResourcesEnabled, false);
   assert.equal(session.reloads, 1);
 
+  terminal.type("/session");
+  await flush();
+  terminal.type("/sessions");
+  await flush();
+  terminal.type("/name demo session");
+  await flush();
+  terminal.type("/compact keep the goal");
+  await flush();
+  terminal.type("/tree entry-1");
+  await flush();
+  terminal.type("/fork entry-1");
+  await flush();
+  terminal.type("/clone");
+  await flush();
+  assert.deepEqual(sessionControls.names, ["demo session"]);
+  assert.deepEqual(sessionControls.compactions, ["keep the goal"]);
+  assert.deepEqual(sessionControls.navigations, ["entry-1"]);
+  assert.match(plainTerminalOutput(terminal), /SESSION TREE/);
+  assert.match(plainTerminalOutput(terminal), /fork created forked-id/);
+  assert.match(plainTerminalOutput(terminal), /clone created cloned-id/);
+
   const approval = mode.requestApproval({ toolName: "write", summary: "write demo.txt", preview: "+demo" });
   terminal.type("y");
   assert.equal(await approval, true);
@@ -320,11 +397,13 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
   const session = new FakeSession(model);
   const terminal = new FakeTerminal();
   const snapshot = createSnapshot();
+  const sessionControls = createSessionControls();
   const mode = new InteractiveMode({
     session,
     modelRegistry: registry,
     cwd: process.cwd(),
     approvalMode: "ask",
+    sessionControls,
     terminal,
     clearContext: () => undefined,
     getContextSnapshot: () => snapshot,

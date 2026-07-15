@@ -9,7 +9,7 @@ import {
   DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
-  SessionManager,
+  type SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
@@ -17,6 +17,7 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
+  DEEPSEEK_PROVIDER,
   formatAgentEvent,
   parseCliArgs,
   resolveDeepSeekModel,
@@ -30,6 +31,12 @@ import {
 } from "./context-resources.ts";
 import { InteractiveMode } from "./interactive.ts";
 import {
+  createPersistentSessionManager,
+  createSessionControls,
+  getDeepSeekSessionDir,
+  type SessionSelection,
+} from "./sessions.ts";
+import {
   activeToolsForMode,
   type ApprovalMode,
   type ApprovalRequest,
@@ -41,6 +48,8 @@ import {
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 
 interface SessionView {
+  readonly sessionFile?: string;
+  readonly sessionId?: string;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string): Promise<void>;
   dispose(): void;
@@ -50,9 +59,26 @@ interface SessionFactoryOptions {
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
   model: SelectedModel;
+  restoreSavedModel: boolean;
   toolPolicy: ToolPolicy;
   tools: string[];
+  sessionSelection: SessionSelection;
   resourceFilter?: ProjectResourceFilter;
+}
+
+export function resolveSessionModel(
+  modelRegistry: ModelRegistry,
+  requestedModel: SelectedModel,
+  sessionManager: Pick<SessionManager, "buildSessionContext">,
+  restoreSavedModel: boolean,
+): SelectedModel {
+  if (!restoreSavedModel) return requestedModel;
+  const savedModel = sessionManager.buildSessionContext().model;
+  if (!savedModel) return requestedModel;
+  if (savedModel.provider !== DEEPSEEK_PROVIDER) {
+    throw new Error(`Only the ${DEEPSEEK_PROVIDER} provider is allowed`);
+  }
+  return resolveDeepSeekModel(modelRegistry, savedModel.modelId);
 }
 
 export interface CliDependencies {
@@ -61,7 +87,7 @@ export interface CliDependencies {
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
   createSession(options: SessionFactoryOptions): Promise<{ session: SessionView }>;
-  runInteractive(options: { model: SelectedModel; approvalMode: ApprovalMode }): Promise<void>;
+  runInteractive(options: { model: SelectedModel; restoreSavedModel: boolean; approvalMode: ApprovalMode; sessionSelection: SessionSelection }): Promise<void>;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
 }
 
@@ -74,6 +100,7 @@ export interface CliIo {
 function productionDependencies(): CliDependencies {
   const cwd = process.cwd();
   const agentDir = getAgentDir();
+  const sessionDir = getDeepSeekSessionDir(agentDir);
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
   const getGitStatus = async (targetCwd: string): Promise<{ available: boolean; status: string }> => {
@@ -88,6 +115,12 @@ function productionDependencies(): CliDependencies {
   };
   const createProductionSession = async (options: SessionFactoryOptions) => {
     const settingsManager = SettingsManager.create(cwd, agentDir);
+    const sessionManager = await createPersistentSessionManager({
+      cwd,
+      sessionDir,
+      selection: options.sessionSelection,
+    });
+    const model = resolveSessionModel(options.modelRegistry, options.model, sessionManager, options.restoreSavedModel);
     const resourceFilter = options.resourceFilter ?? createProjectResourceFilter(cwd, agentDir);
     const resourceLoader = new DefaultResourceLoader({
       cwd,
@@ -104,11 +137,11 @@ function productionDependencies(): CliDependencies {
       cwd,
       authStorage: options.authStorage,
       modelRegistry: options.modelRegistry,
-      model: options.model,
+      model,
       tools: options.tools,
       resourceLoader,
       settingsManager,
-      sessionManager: SessionManager.inMemory(cwd),
+      sessionManager,
     });
     return { ...created, resourceLoader, resourceFilter, agentDir };
   };
@@ -118,7 +151,7 @@ function productionDependencies(): CliDependencies {
     authStorage,
     modelRegistry,
     createSession: createProductionSession,
-    runInteractive: async ({ model, approvalMode }) => {
+    runInteractive: async ({ model, restoreSavedModel, approvalMode, sessionSelection }) => {
       let approvalHandler: ((request: ApprovalRequest) => Promise<boolean>) | undefined;
       const toolPolicy = createToolPolicy({
         cwd,
@@ -130,8 +163,10 @@ function productionDependencies(): CliDependencies {
         authStorage,
         modelRegistry,
         model,
+        restoreSavedModel,
         toolPolicy,
         tools: activeToolsForMode(approvalMode),
+        sessionSelection,
         resourceFilter,
       });
       const mode = new InteractiveMode({
@@ -139,7 +174,11 @@ function productionDependencies(): CliDependencies {
         modelRegistry,
         cwd,
         approvalMode,
-        clearContext: () => created.session.agent.reset(),
+        sessionControls: createSessionControls(created.session, cwd),
+        clearContext: () => {
+          created.session.sessionManager.resetLeaf();
+          created.session.agent.reset();
+        },
         getContextSnapshot: () => captureContextSnapshot({
           loader: created.resourceLoader,
           cwd,
@@ -221,7 +260,12 @@ export async function runCli(
       return 1;
     }
     try {
-      await dependencies.runInteractive({ model, approvalMode: parsed.approvalMode });
+      await dependencies.runInteractive({
+        model,
+        restoreSavedModel: !parsed.modelExplicit && parsed.session.type !== "new",
+        approvalMode: parsed.approvalMode,
+        sessionSelection: parsed.session,
+      });
       return 0;
     } catch (error) {
       io.stderr(`[error] ${sanitizeError(error)}\n`);
@@ -244,8 +288,10 @@ export async function runCli(
       authStorage: dependencies.authStorage,
       modelRegistry: dependencies.modelRegistry,
       model,
+      restoreSavedModel: !parsed.modelExplicit && parsed.session.type !== "new",
       toolPolicy,
       tools,
+      sessionSelection: parsed.session,
     });
     session = created.session;
     session.subscribe((event) => {
@@ -266,6 +312,9 @@ export async function runCli(
       }
     });
     await session.prompt(parsed.task);
+    if (session.sessionId) {
+      io.stderr(`[session] id=${session.sessionId} persisted=${session.sessionFile ? "yes" : "no"}\n`);
+    }
     if (wroteText) io.stdout("\n");
     if (mutatingToolSucceeded) {
       const git = await dependencies.getGitStatus(dependencies.cwd);

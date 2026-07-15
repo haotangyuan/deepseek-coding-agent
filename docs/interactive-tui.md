@@ -1,15 +1,15 @@
-# M3–M4 交互式终端设计
+# M3–M5 交互式终端设计
 
-> 实现版本：M3–M4
+> 实现版本：M3–M5
 > Pi SDK / TUI：`0.80.7`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 最近验证：2026-07-15
 
 ## 1. 目标与非目标
 
-M3 把一次性 CLI 升级为可持续使用的单 Session 终端，同时保留 M1 的 DeepSeek-only 策略和 M2 的工具审批边界。
+M3 把一次性 CLI 升级为持续使用的终端，M4 增加上下文透明化，M5 把内存 Session 替换为 Pi JSONL 持久会话。
 
-本阶段实现多轮输入、流式展示、工具状态、审批、取消和常用命令；不实现持久会话、Compaction、完整 Pi InteractiveMode、MCP 或多 Agent。
+当前实现多轮输入、流式展示、工具状态、审批、取消、上下文资源和文本式会话管理；仍不复制完整 Pi InteractiveMode，不实现 MCP 或多 Agent。
 
 ## 2. 复用边界
 
@@ -21,8 +21,9 @@ M3 把一次性 CLI 升级为可持续使用的单 Session 终端，同时保留
 | 多轮、steering、取消 | Pi `AgentSession` | 选择产品默认行为并展示状态 |
 | 模型、thinking、统计 | Pi `AgentSession` / `ModelRegistry` | 只暴露 DeepSeek 命令 |
 | 工具审批 | M2 Inline Extension | 将审批请求接入 TUI |
+| JSONL、恢复、树与 Compaction | Pi `SessionManager` / `AgentSession` | 启动选择、命令和安全约束 |
 
-没有复制 Pi 的完整 `InteractiveMode`。其会话树、主题、扩展 UI、选择器和大量命令超出当前个人项目里程碑。
+没有复制 Pi 的完整 `InteractiveMode`。本项目只提供适合本地演示的文本式会话树，不复制上游选择器、扩展 UI 和完整命令面。
 
 ## 3. 主流程
 
@@ -71,7 +72,7 @@ transcript 只保存当前进程内的展示组件：
 - approval waiting/approved/rejected 卡片。
 - 系统、重试、错误和 Git 状态。
 
-状态栏显示 `state | provider/model | thinking | tokens | cwd`。其中 token 是当前内存 SessionManager 的累计 usage，不是精确实时计费器。
+状态栏显示 `state | provider/model | session | tokens | cwd`。token 是 Pi 对当前 JSONL 全历史累计的 usage，不是精确实时计费器。
 
 ## 5. 输入、排队和取消
 
@@ -90,6 +91,13 @@ transcript 只保存当前进程内的展示组件：
 |---|---|
 | `/help` | 显示命令列表 |
 | `/status` | 显示模型、thinking、审批、消息和 token |
+| `/session` | 显示当前 ID、标题、文件、cwd、模型、消息和 Compaction 状态 |
+| `/sessions` | 显示当前工作区最近会话，星号标记当前会话 |
+| `/name <title>` | 设置并持久化会话标题 |
+| `/compact [instructions]` | 调用 Pi 手动 Compaction，并显示压缩前后 token |
+| `/tree [entry-id]` | 展示消息树，或将 leaf 移到指定 ID 前缀 |
+| `/fork <entry-id>` | 从已完成的节点创建单分支 JSONL |
+| `/clone` | 复制当前完整 JSONL 树 |
 | `/model [id]` | 列出或切换已认证 DeepSeek 模型 |
 | `/thinking [level]` | 查看或设置当前模型支持的 thinking level |
 | `/reasoning` | 展开或折叠当前 transcript 中的 reasoning |
@@ -98,7 +106,7 @@ transcript 只保存当前进程内的展示组件：
 | `/skills` | 显示 Skill 名称、路径、作用域和是否对模型可见 |
 | `/prompts` | 显示 Prompt Template 名称、路径和作用域 |
 | `/resources [on\|off]` | 查看或临时开关项目资源，并触发 Pi Session reload |
-| `/clear` | 清空 Agent transcript 和界面；累计 Session 统计仍保留 |
+| `/clear` | 清空模型/UI 并 reset leaf；下一条消息形成新 root，旧历史不删除 |
 | `/exit` | 取消活动运行后安全退出 |
 
 `/model` 继续通过 DeepSeek-only resolver，不能切换到 OpenAI、Anthropic 或其他 Provider。
@@ -132,8 +140,9 @@ TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑
 
 ## 9. 已知限制与下一步
 
-- transcript 会随进程结束丢失；M5 才接入 Session JSONL。
-- `/clear` 清空模型上下文，但 SessionManager 的累计 usage 不归零。
+- transcript 的屏幕布局不会恢复，但模型消息、树、标题、模型/thinking 变化和 Compaction 会恢复。
+- `/clear` 不删除 append-only JSONL；若清空后直接退出而没有新消息，resume 仍回到文件最后 leaf。
+- fork/clone 创建后留在当前会话，避免在没有完整 Runtime replacement 的情况下制造内存/文件状态漂移。
 - 工具结果只展示短摘要，没有展开面板或结果搜索。
 - UI 使用固定轻量 ANSI 配色，没有主题系统。
 - `/context` 使用字符数除以 4 粗估 System Prompt token，不替代 Provider tokenizer。

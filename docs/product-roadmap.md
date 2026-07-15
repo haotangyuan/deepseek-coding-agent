@@ -289,6 +289,8 @@ flowchart TB
 
 ### M5：持久会话、恢复与 Compaction
 
+状态：**已完成**（2026-07-15）。
+
 目标：支持真实长任务，同时保持实现与 Pi Session 语义一致。
 
 功能：
@@ -299,6 +301,21 @@ flowchart TB
 - fork/clone/tree navigation 先提供命令入口，后续再考虑图形界面。
 - 自动与手动 compaction，显示触发原因和压缩前后 token。
 - 退出前等待 settled；异常退出后可以安全恢复。
+
+实际交付：
+
+- 默认使用 Pi `SessionManager.create()` 保存 append-only JSONL，存放在独立 `deepseek-code-sessions` 目录。
+- `--continue/-c` 恢复当前 cwd 最近会话；`--resume/-r <id|path>`支持精确 ID、唯一前缀和 JSONL 路径。
+- resume 校验 Session header cwd，拒绝跨工作区静默运行；损坏文件和歧义前缀明确报错。
+- 未显式传 `--model` 时恢复已认证的历史 DeepSeek 模型；显式选择优先，其他 Provider 失败关闭。
+- `/session`、`/sessions`、`/name` 展示并持久化 ID、标题、创建/更新时间、cwd、模型、消息与 token。
+- `/tree [entry]` 展示 append-only tree 并通过 Pi `navigateTree()`移动 leaf，旧分支不删除。
+- `/fork <entry>`从完成节点生成单分支 JSONL；`/clone`复制完整树，均输出新 ID 供下次 resume。
+- `/compact [instructions]`直接调用 Pi `AgentSession.compact()`，展示 start/end、原因和压缩前后 token。
+- Ctrl+C 可取消 Compaction；退出时 abort 活动操作并等待 `waitForIdle()`。
+- 临时目录测试覆盖 create/list/continue/resume/tree/fork/clone、跨 cwd、损坏 JSONL 和 Compaction context。
+- 真实 `deepseek-v4-flash` 两进程 create → resume Smoke 保留上一轮上下文；100×32 TUI 会话命令验证通过。
+- 详细设计与 Pi 边界见 `docs/persistent-sessions.md`。
 
 验收：
 
@@ -420,9 +437,9 @@ npm test
 
 | 优先级 | 工作项 | 原因 |
 |---|---|---|
-| P0 | M5 Session/Compaction | 支持长任务和恢复 |
+| Done | M5 Session/Compaction | 已完成持久化、恢复、树和压缩命令 |
 | Done | M4 上下文透明化 | 已完成真实资源可见性与临时过滤 |
-| P2 | M6 DeepSeek 量化优化 | 形成项目差异化 |
+| P0 | M6 DeepSeek 量化优化 | 形成项目差异化 |
 | P2 | M7 演示材料与稳定性 | 面向 GitHub 和面试展示 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
@@ -459,9 +476,13 @@ npm test
 | D-011 | 上下文视图只读取 Pi ResourceLoader 运行时快照 | 已采纳 | 避免第二套发现逻辑与真实请求漂移 |
 | D-012 | 项目资源开关与工具审批相互独立 | 已采纳 | 指令来源信任不能替代动作授权 |
 | D-013 | 使用原创 DeepSeek 启发的深海蓝视觉 | 已采纳 | 形成模型特色，同时避免复制官方品牌资产 |
+| D-014 | 产品会话与 Pi CLI 默认目录隔离 | 已采纳 | 复用格式但避免两个产品的列表互相污染 |
+| D-015 | resume 只允许当前 cwd | 已采纳 | 会话上下文与工具工作区必须一致，跨目录显式失败 |
+| D-016 | fork/clone 创建后不在当前进程热切换 | 已采纳 | 避免绕开 AgentSessionRuntime 导致内存与 JSONL 状态漂移 |
 
 ### 更新日志
 
+- **2026-07-15：** 完成 M5。加入 Pi JSONL 持久会话、continue/resume、标题与列表、树导航、fork/clone、Compaction 和安全退出。
 - **2026-07-15：** 完成 M4。加入上下文快照、AGENTS/Skills/Prompts 命令、项目资源热重载、显式资源调用和深海蓝 TUI 视觉。
 - **2026-07-15：** 完成 M3。加入 Pi TUI 多轮交互、reasoning 折叠、工具/审批卡片、状态栏、命令、steering 和取消。
 - **2026-07-15：** 完成 M2。加入三种审批模式、文件路径边界、修改预览、危险 Bash 阻断、Git 摘要和真实 Tool Loop 验证。

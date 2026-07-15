@@ -1,4 +1,5 @@
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
+import type { SessionSelection } from "./sessions.ts";
 import { APPROVAL_MODES, type ApprovalMode } from "./tool-policy.ts";
 
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
@@ -7,7 +8,9 @@ export const DEEPSEEK_PROVIDER = "deepseek";
 export interface CliOptions {
   help: boolean;
   modelId: string;
+  modelExplicit: boolean;
   approvalMode: ApprovalMode;
+  session: SessionSelection;
   task: string;
 }
 
@@ -25,7 +28,7 @@ export interface ModelRegistryView {
 
 function readOptionValue(args: string[], index: number, option: string): { value: string; nextIndex: number } {
   const value = args[index + 1];
-  if (!value || value.startsWith("--")) {
+  if (!value || value.startsWith("-")) {
     throw new Error(`${option} requires a value`);
   }
   return { value, nextIndex: index + 1 };
@@ -34,7 +37,9 @@ function readOptionValue(args: string[], index: number, option: string): { value
 export function parseCliArgs(args: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL_ID;
+  let modelExplicit = false;
   let approvalMode: ApprovalMode = "ask";
+  let session: SessionSelection = { type: "new" };
   const taskParts: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -44,9 +49,11 @@ export function parseCliArgs(args: string[]): CliOptions {
     } else if (arg === "--model") {
       const parsed = readOptionValue(args, index, "--model");
       model = parsed.value;
+      modelExplicit = true;
       index = parsed.nextIndex;
     } else if (arg.startsWith("--model=")) {
       model = arg.slice("--model=".length);
+      modelExplicit = true;
       if (!model) throw new Error("--model requires a value");
     } else if (arg === "--approval") {
       const parsed = readOptionValue(args, index, "--approval");
@@ -61,6 +68,19 @@ export function parseCliArgs(args: string[]): CliOptions {
         throw new Error(`Invalid approval mode: ${value || "(empty)"}`);
       }
       approvalMode = value as ApprovalMode;
+    } else if (arg === "--continue" || arg === "-c") {
+      if (session.type !== "new") throw new Error("Only one session selection option is allowed");
+      session = { type: "continue" };
+    } else if (arg === "--resume" || arg === "-r") {
+      if (session.type !== "new") throw new Error("Only one session selection option is allowed");
+      const parsed = readOptionValue(args, index, arg);
+      session = { type: "resume", target: parsed.value };
+      index = parsed.nextIndex;
+    } else if (arg.startsWith("--resume=")) {
+      if (session.type !== "new") throw new Error("Only one session selection option is allowed");
+      const target = arg.slice("--resume=".length);
+      if (!target) throw new Error("--resume requires a value");
+      session = { type: "resume", target };
     } else if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     } else {
@@ -78,7 +98,7 @@ export function parseCliArgs(args: string[]): CliOptions {
   }
   if (!model) throw new Error("Model ID cannot be empty");
 
-  return { help, modelId: model, approvalMode, task: taskParts.join(" ").trim() };
+  return { help, modelId: model, modelExplicit, approvalMode, session, task: taskParts.join(" ").trim() };
 }
 
 export function resolveDeepSeekModel(registry: ModelRegistryView, modelId: string): SelectedModel {
@@ -193,10 +213,11 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
 
 export function usage(): string {
   return [
-    "Usage: deepseek-code [--model MODEL] [--approval MODE] \"Describe the coding task\"",
+    "Usage: deepseek-code [--model MODEL] [--approval MODE] [--continue | --resume ID_OR_PATH] [\"task\"]",
     "",
     `Default model: ${DEFAULT_MODEL_ID}`,
     `Allowed provider: ${DEEPSEEK_PROVIDER}`,
     "Approval modes: ask (default), auto-read, deny",
+    "Session options: --continue/-c resumes the latest workspace session; --resume/-r selects by ID or JSONL path",
   ].join("\n");
 }

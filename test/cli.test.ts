@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { formatAgentEvent, parseCliArgs, resolveDeepSeekModel, sanitizeError } from "../src/cli.ts";
-import { type CliDependencies, runCli } from "../src/main.ts";
+import { type CliDependencies, resolveSessionModel, runCli } from "../src/main.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 
@@ -18,13 +18,17 @@ test("parses the default model and task text", () => {
   assert.deepEqual(parseCliArgs(["summarize", "this", "repo"]), {
     help: false,
     modelId: "deepseek-v4-flash",
+    modelExplicit: false,
     approvalMode: "ask",
+    session: { type: "new" },
     task: "summarize this repo",
   });
 });
 
 test("accepts an explicit DeepSeek model and rejects other providers", () => {
-  assert.equal(parseCliArgs(["--model", "deepseek/deepseek-v4-flash", "task"]).modelId, "deepseek-v4-flash");
+  const parsed = parseCliArgs(["--model", "deepseek/deepseek-v4-flash", "task"]);
+  assert.equal(parsed.modelId, "deepseek-v4-flash");
+  assert.equal(parsed.modelExplicit, true);
   assert.throws(() => parseCliArgs(["--model", "openai/gpt-5", "task"]), /Only the deepseek provider/);
 });
 
@@ -39,6 +43,14 @@ test("parses explicit approval modes", () => {
   assert.equal(parseCliArgs(["--approval=deny", "task"]).approvalMode, "deny");
 });
 
+test("parses persistent session selection and rejects conflicts", () => {
+  assert.deepEqual(parseCliArgs(["--continue"]).session, { type: "continue" });
+  assert.deepEqual(parseCliArgs(["--resume", "abc123"]).session, { type: "resume", target: "abc123" });
+  assert.deepEqual(parseCliArgs(["--resume=history.jsonl"]).session, { type: "resume", target: "history.jsonl" });
+  assert.throws(() => parseCliArgs(["--continue", "--resume", "abc"]), /Only one session selection/);
+  assert.throws(() => parseCliArgs(["--resume"]), /requires a value/);
+});
+
 test("resolves only an existing and authenticated DeepSeek model", () => {
   const available = createRegistry(true).modelRegistry;
   assert.equal(resolveDeepSeekModel(available, "deepseek-v4-flash").provider, "deepseek");
@@ -46,6 +58,20 @@ test("resolves only an existing and authenticated DeepSeek model", () => {
 
   const unavailable = createRegistry(false).modelRegistry;
   assert.throws(() => resolveDeepSeekModel(unavailable, "deepseek-v4-flash"), /DEEPSEEK_API_KEY/);
+});
+
+test("restores only a saved DeepSeek model unless the CLI model was explicit", () => {
+  const { modelRegistry } = createRegistry(true);
+  const flash = modelRegistry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(flash);
+  const saved = SessionManager.inMemory(process.cwd());
+  saved.appendModelChange("deepseek", "deepseek-v4-pro");
+  assert.equal(resolveSessionModel(modelRegistry, flash, saved, true).id, "deepseek-v4-pro");
+  assert.equal(resolveSessionModel(modelRegistry, flash, saved, false).id, "deepseek-v4-flash");
+
+  const unsupported = SessionManager.inMemory(process.cwd());
+  unsupported.appendModelChange("openai", "gpt-5");
+  assert.throws(() => resolveSessionModel(modelRegistry, flash, unsupported, true), /Only the deepseek provider/);
 });
 
 test("formats text, reasoning, tool and completion events", () => {
@@ -98,6 +124,8 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   const { authStorage, modelRegistry } = createRegistry(true);
   let selectedModel: SelectedModel | undefined;
   let selectedTools: string[] = [];
+  let selectedSession = "";
+  let restoreSavedModel = true;
   let prompt = "";
   let listener: ((event: AgentSessionEvent) => void) | undefined;
   const dependencies: CliDependencies = {
@@ -108,6 +136,8 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
     createSession: async (options) => {
       selectedModel = options.model;
       selectedTools = options.tools;
+      selectedSession = options.sessionSelection.type;
+      restoreSavedModel = options.restoreSavedModel;
       return {
         session: {
           subscribe: (nextListener) => {
@@ -143,6 +173,8 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(selectedModel?.provider, "deepseek");
   assert.equal(selectedModel?.id, "deepseek-v4-flash");
   assert.deepEqual(selectedTools, ["read", "write", "edit", "bash"]);
+  assert.equal(selectedSession, "new");
+  assert.equal(restoreSavedModel, false);
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);

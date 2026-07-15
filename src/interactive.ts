@@ -22,6 +22,7 @@ import {
 import { relative } from "node:path";
 import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
+import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
 import type { ApprovalMode, ApprovalRequest } from "./tool-policy.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
@@ -29,6 +30,7 @@ type ThinkingLevel = AgentSession["thinkingLevel"];
 
 export interface InteractiveSession {
   readonly isStreaming: boolean;
+  readonly isIdle: boolean;
   readonly model: SelectedModel | undefined;
   readonly thinkingLevel: ThinkingLevel;
   readonly systemPrompt: string;
@@ -36,6 +38,7 @@ export interface InteractiveSession {
   prompt(text: string): Promise<void>;
   steer(text: string): Promise<void>;
   abort(): Promise<void>;
+  waitForIdle(): Promise<void>;
   setModel(model: SelectedModel): Promise<void>;
   setThinkingLevel(level: ThinkingLevel): void;
   getAvailableThinkingLevels(): ThinkingLevel[];
@@ -50,6 +53,7 @@ export interface InteractiveModeOptions {
   modelRegistry: ModelRegistry;
   cwd: string;
   approvalMode: ApprovalMode;
+  sessionControls: SessionControls;
   terminal?: Terminal;
   clearContext(): void;
   getContextSnapshot(): ContextSnapshot;
@@ -58,9 +62,8 @@ export interface InteractiveModeOptions {
 }
 
 export type InteractiveCommand =
-  | { name: "help" | "status" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts"; argument: string }
-  | { name: "model" | "thinking"; argument: string }
-  | { name: "resources"; argument: string }
+  | { name: "help" | "status" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
+  | { name: "model" | "thinking" | "resources" | "name" | "compact" | "tree" | "fork"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -150,14 +153,15 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
   const separator = trimmed.indexOf(" ");
   const name = trimmed.slice(1, separator === -1 ? undefined : separator).toLowerCase();
   const argument = separator === -1 ? "" : trimmed.slice(separator + 1).trim();
-  if (["help", "status", "clear", "exit", "reasoning", "context", "agents", "skills", "prompts"].includes(name)) {
+  if (["help", "status", "clear", "exit", "reasoning", "context", "agents", "skills", "prompts", "session", "sessions", "clone"].includes(name)) {
     return {
-      name: name as "help" | "status" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts",
+      name: name as "help" | "status" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone",
       argument,
     };
   }
-  if (name === "model" || name === "thinking") return { name, argument };
-  if (name === "resources") return { name, argument };
+  if (["model", "thinking", "resources", "name", "compact", "tree", "fork"].includes(name)) {
+    return { name: name as "model" | "thinking" | "resources" | "name" | "compact" | "tree" | "fork", argument };
+  }
   return { name: "unknown", argument: name };
 }
 
@@ -262,6 +266,8 @@ export class InteractiveMode {
     this.unsubscribe = this.session.subscribe((event) => this.handleEvent(event));
     this.addSystem(`workspace ${this.options.cwd}`);
     this.addSystem(`approval ${this.options.approvalMode}`);
+    const session = this.options.sessionControls.snapshot();
+    this.addSystem(`session ${session.id} · ${session.persisted ? "persisted" : "memory"}`);
     this.addSystem("project context and tool approval are independent boundaries");
     this.tui.start();
     try {
@@ -305,8 +311,9 @@ export class InteractiveMode {
     const stats = this.session.getSessionStats();
     const model = this.session.model?.id ?? "none";
     const cwd = relative(process.cwd(), this.options.cwd) || ".";
+    const session = this.options.sessionControls.snapshot();
     this.status.setText(
-      `${state} | ${DEEPSEEK_PROVIDER}/${model} | thinking=${this.session.thinkingLevel} | tokens=${stats.tokens.total} | cwd=${cwd}`,
+      `${state} | ${DEEPSEEK_PROVIDER}/${model} | session=${session.id.slice(0, 8)} | tokens=${stats.tokens.total} | cwd=${cwd}`,
     );
     const context = this.options.getContextSnapshot();
     const modelLabel = model.replace(/^deepseek-v4-/, "V4 ").toUpperCase();
@@ -342,6 +349,11 @@ export class InteractiveMode {
       return;
     }
 
+    if (this.options.sessionControls.snapshot().compacting) {
+      this.addError("wait for compaction to finish or press Ctrl+C to cancel it");
+      return;
+    }
+
     this.transcript.addChild(new Text(`${colors.accent("you")}  ${sanitizeError(text)}`, 1, 0));
     this.resetTurnComponents();
     this.updateStatus(this.session.isStreaming ? "queued steering" : "running");
@@ -371,14 +383,28 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /context /agents /skills /prompts /resources [on|off] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /session /sessions /name [title] /compact [instructions] /tree [entry] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
       const context = this.options.getContextSnapshot();
       this.addSystem(
-        `model=${this.session.model?.id ?? "none"} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
+        `model=${this.session.model?.id ?? "none"} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} session=${stats.sessionId} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
       );
+    } else if (command.name === "session") {
+      this.showSession();
+    } else if (command.name === "sessions") {
+      await this.showSessions();
+    } else if (command.name === "name") {
+      this.handleSessionName(command.argument);
+    } else if (command.name === "compact") {
+      await this.handleCompaction(command.argument);
+    } else if (command.name === "tree") {
+      await this.handleTree(command.argument);
+    } else if (command.name === "fork") {
+      this.handleFork(command.argument);
+    } else if (command.name === "clone") {
+      this.handleClone();
     } else if (command.name === "context") {
       this.showContextSummary();
     } else if (command.name === "agents") {
@@ -397,7 +423,7 @@ export class InteractiveMode {
       this.refreshReasoning();
       this.addSystem(`reasoning display ${this.showReasoning ? "expanded" : "collapsed"}`);
     } else if (command.name === "clear") {
-      if (this.session.isStreaming) {
+      if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
         this.addError("cancel the active run before clearing context");
       } else {
         this.options.clearContext();
@@ -405,7 +431,7 @@ export class InteractiveMode {
         this.toolLines.clear();
         this.reasoningBlocks.length = 0;
         this.resetTurnComponents();
-        this.addSystem("conversation context cleared");
+        this.addSystem("conversation context cleared; the next prompt starts a new root while persisted history remains available");
       }
     } else if (command.name === "exit") {
       await this.exit();
@@ -418,6 +444,132 @@ export class InteractiveMode {
     }
     this.updateStatus(this.session.isStreaming ? "running" : "idle");
     this.tui.requestRender();
+  }
+
+  private showSession(): void {
+    const snapshot = this.options.sessionControls.snapshot();
+    const stats = this.session.getSessionStats();
+    this.addSystem(
+      [
+        "SESSION",
+        `  id                ${snapshot.id}`,
+        `  name              ${snapshot.name ?? "(unnamed)"}`,
+        `  storage           ${snapshot.persisted ? snapshot.file ? sessionFileName(snapshot.file) : "pending first response" : "memory"}`,
+        `  workspace         ${this.options.cwd}`,
+        `  model             ${DEEPSEEK_PROVIDER}/${this.session.model?.id ?? "none"}`,
+        `  messages          ${stats.totalMessages}`,
+        `  tokens            ${stats.tokens.total}`,
+        `  auto compaction   ${snapshot.autoCompaction ? "on" : "off"}`,
+      ].join("\n"),
+    );
+  }
+
+  private async showSessions(): Promise<void> {
+    let sessions;
+    try {
+      sessions = await this.options.sessionControls.list();
+    } catch (error) {
+      this.addError(`session listing failed: ${sanitizeError(error)}`);
+      return;
+    }
+    if (sessions.length === 0) {
+      this.addSystem("no persisted sessions in this workspace");
+      return;
+    }
+    const currentId = this.options.sessionControls.snapshot().id;
+    const lines = sessions.slice(0, 12).flatMap((session) => {
+      const marker = session.id === currentId ? "*" : " ";
+      const created = session.created.toISOString().replace("T", " ").slice(0, 16);
+      const modified = session.modified.toISOString().replace("T", " ").slice(0, 16);
+      return [
+        `${marker} ${session.id.slice(0, 12)} · ${sessionDisplayName(session)}`,
+        `    created=${created} · updated=${modified} · ${session.messageCount} msg · ${session.model ?? "model unknown"}`,
+      ];
+    });
+    if (sessions.length > 12) lines.push(`  ... ${sessions.length - 12} more`);
+    this.addSystem(`SESSIONS (* current)\n${lines.join("\n")}`);
+  }
+
+  private handleSessionName(name: string): void {
+    if (!name) {
+      this.addError("usage: /name <session title>");
+      return;
+    }
+    const title = name.slice(0, 100);
+    this.options.sessionControls.setName(title);
+    this.addSystem(`session named ${title}`);
+  }
+
+  private async handleCompaction(instructions: string): Promise<void> {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("wait for the active operation before compacting");
+      return;
+    }
+    this.updateStatus("compacting");
+    try {
+      const result = await this.options.sessionControls.compact(instructions || undefined);
+      this.addSystem(
+        `compaction complete · before=${result.tokensBefore} tokens · after≈${result.estimatedTokensAfter ?? "unknown"} tokens`,
+      );
+    } catch (error) {
+      this.addError(`compaction failed: ${sanitizeError(error)}`);
+    }
+  }
+
+  private async handleTree(target: string): Promise<void> {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("tree navigation is unavailable during an active run");
+      return;
+    }
+    try {
+      if (target) {
+        const result = await this.options.sessionControls.navigate(target);
+        if (result.cancelled) {
+          this.addSystem("tree navigation cancelled");
+          return;
+        }
+        this.addSystem(`session leaf moved to ${target}; existing branches were preserved`);
+      }
+      const items = this.options.sessionControls.tree();
+      const lines = items.slice(0, 40).map((item) => {
+        const marker = item.isLeaf ? "*" : " ";
+        return `${marker} ${"  ".repeat(Math.min(item.depth, 6))}${item.id.slice(0, 12)} · ${item.preview}`;
+      });
+      if (items.length > 40) lines.push(`  ... ${items.length - 40} more`);
+      this.addSystem(`SESSION TREE (* current leaf)\n${lines.join("\n") || "  empty"}`);
+    } catch (error) {
+      this.addError(`tree navigation failed: ${sanitizeError(error)}`);
+    }
+  }
+
+  private handleFork(entryId: string): void {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("fork is unavailable during an active run");
+      return;
+    }
+    if (!entryId) {
+      this.addError("usage: /fork <entry id or prefix>");
+      return;
+    }
+    try {
+      const forked = this.options.sessionControls.fork(entryId);
+      this.addSystem(`fork created ${forked.id}; resume with: deepseek-code --resume ${forked.id}`);
+    } catch (error) {
+      this.addError(`fork failed: ${sanitizeError(error)}`);
+    }
+  }
+
+  private handleClone(): void {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("clone is unavailable during an active run");
+      return;
+    }
+    try {
+      const cloned = this.options.sessionControls.clone();
+      this.addSystem(`clone created ${cloned.id}; resume with: deepseek-code --resume ${cloned.id}`);
+    } catch (error) {
+      this.addError(`clone failed: ${sanitizeError(error)}`);
+    }
   }
 
   private showContextSummary(): void {
@@ -452,7 +604,7 @@ export class InteractiveMode {
       this.addError("usage: /resources [on|off]");
       return;
     }
-    if (this.session.isStreaming) {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
       this.addError("project resources cannot be reloaded during an active run");
       return;
     }
@@ -483,7 +635,7 @@ export class InteractiveMode {
       this.addSystem(`available DeepSeek models: ${models || "none"}`);
       return;
     }
-    if (this.session.isStreaming) {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
       this.addError("model cannot be changed during an active run");
       return;
     }
@@ -517,6 +669,12 @@ export class InteractiveMode {
       approval.line.setText(`${colors.error("[approval:rejected]")} ${approval.request.summary}`);
       approval.resolve(false);
       this.updateStatus("running");
+      return;
+    }
+    if (this.options.sessionControls.snapshot().compacting) {
+      this.options.sessionControls.abortCompaction();
+      this.addSystem("compaction cancellation requested");
+      this.updateStatus("cancelling compaction");
       return;
     }
     if (this.session.isStreaming) {
@@ -595,6 +753,16 @@ export class InteractiveMode {
     } else if (event.type === "auto_retry_start") {
       this.addSystem(`retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${event.errorMessage}`);
       this.updateStatus("retrying");
+    } else if (event.type === "compaction_start") {
+      this.addSystem(`compaction started · reason=${event.reason}`);
+      this.updateStatus("compacting");
+    } else if (event.type === "compaction_end") {
+      if (event.aborted) {
+        this.addSystem("compaction cancelled");
+      } else if (event.errorMessage) {
+        this.addError(`compaction failed: ${event.errorMessage}`);
+      }
+      this.updateStatus("idle");
     } else if (event.type === "agent_settled") {
       this.updateStatus("idle");
       if (this.mutatingToolSucceeded) {
@@ -631,7 +799,9 @@ export class InteractiveMode {
   private async exit(): Promise<void> {
     if (this.exiting) return;
     this.exiting = true;
+    if (this.options.sessionControls.snapshot().compacting) this.options.sessionControls.abortCompaction();
     if (this.session.isStreaming) await this.session.abort();
+    if (!this.session.isIdle) await this.session.waitForIdle();
     this.exitResolve?.();
   }
 }
