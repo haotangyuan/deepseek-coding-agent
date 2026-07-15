@@ -4,6 +4,7 @@
 > 项目起始提交：`679bc71464f714be581472f7383bbb51d72d0b23`
 > Pi 研究源码：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > Pi SDK：`@earendil-works/pi-coding-agent@0.80.7`
+> 当前评测输出协议：Schema v2
 
 ## 1. 目的与边界
 
@@ -15,7 +16,9 @@
 - `src/evaluation.ts` 只订阅 `AgentSessionEvent` 并读取 `getSessionStats()`，不介入消息或工具执行。
 - `src/eval.ts` 通过产品 CLI 跑真实链路，不直接拼 DeepSeek HTTP 请求。
 - `--ephemeral` 使用 Pi `SessionManager.inMemory()`，评测不会污染日常 JSONL 会话。
-- `repair-js` 与 `repair-multi-file` 只在系统临时目录自动批准 write/edit；Bash 始终拒绝，测试由评测器执行，结束后删除 fixture。
+- 三个 repair 任务只在系统临时目录自动批准 write/edit；Bash 始终拒绝，测试由评测器执行，结束后删除 fixture。
+- `repair-feedback` 的隐藏测试在 Agent 工作区外；失败只回填 evaluator 生成的最小摘要，不暴露测试源码、路径或堆栈。
+- 每次 repair Agent 尝试最多 60 秒；超时通过 `AbortSignal` 调用 Pi `AgentSession.abort()`，不只是在外层放弃等待。
 - 自动化只用事件替身和内存对象；真实 API 必须显式增加 `--live`。
 
 设计推断：稳定的产品优化应当建立在同一任务、同一模型、同一 thinking 档位和多次样本上。单次 smoke 只能证明链路可用，不能证明模型或档位更优。
@@ -68,9 +71,9 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking max --run
 npm run eval -- --live --task all --model deepseek-v4-pro --thinking high --runs 3
 ```
 
-`--runs` 限制为 1–5。Pro 必须显式选择，不存在自动升级。建议先 dry-run 检查 `requestCount` 和 `maxCostUsd`，再决定是否付费执行。默认上限为 0.02 美元；累计已知成本达到上限后不再开始下一次请求，最终超过上限则汇总失败。由于真实成本只能在一次请求完成并返回 usage 后计算，这是一条请求间的观测边界，不是 Provider 侧预授权的硬预算。
+`--runs` 限制为 1–5。Pro 必须显式选择，不存在自动升级。建议先 dry-run 检查 `sampleCount`、`maxProviderRequests` 和 `maxCostUsd`，再决定是否付费执行。默认上限为 0.02 美元；累计已知成本达到上限后不再开始下一次请求，最终超过上限则汇总失败。由于真实成本只能在一次请求完成并返回 usage 后计算，这是一条请求间的观测边界，不是 Provider 侧预授权的硬预算。
 
-输出协议固定为 NDJSON：dry-run 只有一条 `eval_plan`；真实执行每个样本一条 `eval_result`，最后一条 `eval_summary`。汇总包含计划/完成/通过/失败数量、累计成本、预算是否超出及停止原因，不记录完整 reasoning、工具结果或凭据。
+输出协议固定为 NDJSON。Schema v2 的 dry-run 只有一条 `eval_plan`，其中 `sampleCount` 是逻辑样本数，`maxProviderRequests` 是包含最多一次反馈修复后的调用上限；真实执行每个样本一条 `eval_result`，最后一条 `eval_summary`。repair 结果包含每次尝试的短输出、测试状态和指标，但不记录完整 reasoning、工具结果、隐藏测试或凭据。
 
 一次性 CLI 也可单独输出指标：
 
@@ -89,8 +92,9 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | `missing-file-recovery` | auto-read | 工具失败且最终严格返回 `RECOVERED` | 错误结果回填和模型恢复 |
 | `repair-js` | 临时目录内 write/edit | Agent/工具成功、测试通过、测试文件未变、源码已变 | 读代码、真实修改和确定性外部评分 |
 | `repair-multi-file` | 临时目录内 write/edit | Agent/工具成功、两个目标源码都改变、原文件无缺失、入口和测试不变、无额外文件、测试通过 | 多文件定位、完整执行和防止投机修改 |
+| `repair-feedback` | 临时目录内 write/edit；隐藏测试在目录外 | 第一轮测试失败、第二轮使用摘要恢复、两个目标源码改变、测试通过、工具错误不超过 5 次 | act → verify → repair 和反馈质量 |
 
-前三项是低成本协议基线，最终输出保持全文严格匹配。repair 链路可能在工具轮次间产生可见的解释文本，因此模型文本只作为短诊断摘要，不参与通过判定；正确性由 Agent/工具状态、文件完整性和外部测试共同决定。两个 repair fixture 验证单文件和多文件真实修改，但仍不足以代表复杂项目质量。后续应增加失败测试反馈、长上下文恢复和 Compaction 任务。修改类任务继续只在隔离目录执行。
+前三项是低成本协议基线，最终输出保持全文严格匹配。repair 链路可能在工具轮次间产生可见的解释文本，因此模型文本只作为短诊断摘要，不参与通过判定；正确性由 Agent/工具状态、文件完整性和外部测试共同决定。`repair-feedback` 使用两个独立的 Pi 内存 Session，但共享同一临时工作区：第二个 Agent 根据测试摘要重新读取当前源码，不伪装成同一模型会话。修改类任务继续只在隔离目录执行。
 
 ## 5. 指标定义
 
@@ -106,6 +110,8 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | `cacheHitRate` | `cacheRead / (input + cacheRead)` | 基于 Pi 归一化 usage；0 可能表示未命中或 Provider 未返回 |
 | `tokens/costUsd` | Pi Session 累计统计 | 成本使用当前模型 catalog 单价，价格变化后需重新核对 |
 | `eventSequence` | 去除连续重复后的事件类别，最多 64 项 | 便于检查主链路，不保存完整 reasoning 或工具内容 |
+| `attemptCount/feedbackRounds` | 一个逻辑样本实际使用的 Agent 尝试和反馈轮数 | 用于区分任务样本与 Provider 请求 |
+| `feedbackChecks` | 首次失败、反馈后恢复、工具错误上限 | 防止“最终碰巧通过但过程严重抖动”被记为可靠恢复 |
 
 ## 6. 错误诊断与重试边界
 
@@ -138,8 +144,9 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | Pro / high / exact | 通过 | 835 ms | 1209 ms | 0% | $0.00032277 |
 | Flash / high / repair-js | 通过，3 次工具成功，外部测试通过 | 1142 ms | 4212 ms | 68.95% | $0.0009056432 |
 | Flash / high / repair-multi-file | 通过，6 次工具成功，两个目标文件修改且外部测试通过 | 1045 ms | 7579 ms | 88.71% | $0.0005783456 |
+| Flash / high / repair-feedback | 通过；首轮失败、第二轮恢复；6 次工具成功、0 错误 | 1369 / 850 ms | 16330 ms | 92.15% / 96.59% | $0.0008691984 |
 
-事实：既有 6 次 smoke 与新增多文件 smoke 均完成预期链路；多文件任务确认两个目标源码都改变、受保护文件不变、没有额外文件且测试通过。新增任务最初两次预验证也完成了正确修改，却因为模型在工具轮次间输出了解释文本而被“全文必须等于 FIXED”误判失败；评测器随后改为协议任务严格验证文本、编码任务由外部状态裁决。这个调整没有放宽文件或测试条件。推断限制：每个最终样本量仍为 1，且缓存状态不同，不能据此比较 high/max 或 Flash/Pro 的优劣。正式对比至少应每格运行 3 次，并报告中位数、离散程度、通过率和缓存状态。
+事实：既有任务与新增反馈恢复任务均完成预期链路。`repair-feedback` 的首次预验证曾超过 2 分钟且没有结果，因此增加了真实 Session abort；随后直接回填 TAP 输出虽然功能通过，却造成 36 次工具调用和 31 次工具错误。改成不含路径/堆栈的 evaluator 摘要后，最终样本用两轮、6 次成功工具调用和 0 次工具错误完成，且总成本下降到 $0.0008691984。推断限制：这是单个最终样本，不能据此宣称优化具有统计显著性；它只证明新闭环可工作，并提供了值得重复测量的反馈格式假设。
 
 ## 8. 优化准入与回滚
 
@@ -153,8 +160,8 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 ## 9. 下一步
 
-- 增加“首次测试失败 → 把受控反馈交还 Agent → 二次修复”的 evaluator-owned 循环，但仍不开放无人值守 Bash。
 - 为 TUI 的错误分类增加更紧凑的 80 列卡片布局。
+- 将 repair 任务各重复至少 3 次，比较短摘要对工具错误、耗时和成本的稳定影响。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。
 - 只有在普通 Schema 失败样本足够明确后，再在 playground 研究 strict tool mode。

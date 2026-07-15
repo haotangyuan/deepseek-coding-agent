@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSessionEvent, SessionStats } from "@earendil-works/pi-coding-agent";
-import { parseEvalArgs, summarizeEval, verifyRepairFiles } from "../src/eval.ts";
+import { buildRepairFeedback, parseEvalArgs, shouldRetryRepair, summarizeEval, verifyFeedbackRecovery, verifyRepairFiles } from "../src/eval.ts";
 import { EvaluationMetricsCollector } from "../src/evaluation.ts";
 
 const partial = {
@@ -28,12 +28,34 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
   assert.equal(parseEvalArgs(["--live", "--task", "exact", "--runs=2", "--thinking=max"]).live, true);
   assert.equal(parseEvalArgs(["--task", "repair-js"]).task, "repair-js");
   assert.equal(parseEvalArgs(["--task", "repair-multi-file", "--max-cost-usd=0.5"]).maxCostUsd, 0.5);
+  assert.equal(parseEvalArgs(["--task", "repair-feedback"]).task, "repair-feedback");
   assert.throws(() => parseEvalArgs(["--model", "openai/gpt-5"]), /only allows the deepseek provider/i);
   assert.throws(() => parseEvalArgs(["--model", "deepseek/"]), /Model ID cannot be empty/);
   assert.throws(() => parseEvalArgs(["--thinking", "medium"]), /Invalid thinking level/);
   assert.throws(() => parseEvalArgs(["--runs", "6"]), /1 to 5/);
   assert.throws(() => parseEvalArgs(["--max-cost-usd", "0"]), /greater than 0/);
   assert.throws(() => parseEvalArgs(["--max-cost-usd", "2"]), /at most 1/);
+});
+
+test("repair feedback is bounded, redacted, and only retried after a test failure", () => {
+  const feedback = buildRepairFeedback(`failure with authorization: bearer fake-secret-token ${"x".repeat(2500)}`);
+  assert.match(feedback, /hidden regression tests/);
+  assert.match(feedback, /\[REDACTED\]/);
+  assert.doesNotMatch(feedback, /fake-secret-token/);
+  assert.ok(feedback.length < 2400);
+  assert.equal(shouldRetryRepair(0, false, 1, 2, 0.001, 0.005), true);
+  assert.equal(shouldRetryRepair(1, false, 1, 2, 0.001, 0.005), false);
+  assert.equal(shouldRetryRepair(0, true, 1, 2, 0.001, 0.005), false);
+  assert.equal(shouldRetryRepair(0, false, 2, 2, 0.001, 0.005), false);
+  assert.equal(shouldRetryRepair(0, false, 1, 2, 0.005, 0.005), false);
+  assert.deepEqual(verifyFeedbackRecovery([false, true], 2), {
+    firstAttemptFailed: true,
+    recoveredAfterFeedback: true,
+    toolErrorsWithinLimit: true,
+    toolErrors: 2,
+  });
+  assert.equal(verifyFeedbackRecovery([false, true], 6).toolErrorsWithinLimit, false);
+  assert.equal(verifyFeedbackRecovery([true], 0).recoveredAfterFeedback, false);
 });
 
 test("repair verification requires every expected edit and preserves protected files", () => {
@@ -77,19 +99,25 @@ test("repair verification requires every expected edit and preserves protected f
 });
 
 test("evaluation summary reports pass, cost, and budget stop", () => {
-  const passed = { type: "eval_result", schemaVersion: 1, passed: true, metrics: { costUsd: 0.005 } };
+  const passed = { type: "eval_result", schemaVersion: 2, passed: true, metrics: { costUsd: 0.005 } };
   assert.deepEqual(summarizeEval(1, [passed], 0.02), {
     type: "eval_summary",
-    schemaVersion: 1,
+    schemaVersion: 2,
     passed: true,
-    plannedRequests: 1,
-    completedRequests: 1,
-    passedRequests: 1,
-    failedRequests: 0,
+    plannedSamples: 1,
+    completedSamples: 1,
+    passedSamples: 1,
+    failedSamples: 0,
     costUsd: 0.005,
     maxCostUsd: 0.02,
     budgetExceeded: false,
+    providerRequests: 1,
+    maxProviderRequests: 1,
   });
+  const repaired = summarizeEval(1, [{ passed: true, costUsd: 0.007, attemptCount: 2 }], 0.02, 2);
+  assert.equal(repaired.costUsd, 0.007);
+  assert.equal(repaired.providerRequests, 2);
+  assert.equal(repaired.maxProviderRequests, 2);
   const stopped = summarizeEval(2, [{ ...passed, metrics: { costUsd: 0.015 } }], 0.01);
   assert.equal(stopped.passed, false);
   assert.equal(stopped.stoppedReason, "cost_limit");

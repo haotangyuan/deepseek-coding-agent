@@ -57,6 +57,7 @@ interface SessionView {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string): Promise<void>;
   getSessionStats(): SessionStats;
+  abort?(): Promise<void>;
   dispose(): void;
 }
 
@@ -107,6 +108,10 @@ export interface CliIo {
   stdout(text: string): void;
   stderr(text: string): void;
   approve?(request: ApprovalRequest): Promise<boolean>;
+}
+
+export interface CliRunOptions {
+  signal?: AbortSignal;
 }
 
 function productionDependencies(): CliDependencies {
@@ -247,6 +252,7 @@ export async function runCli(
   args: string[],
   io: CliIo = processIo,
   dependencies: CliDependencies = productionDependencies(),
+  runOptions: CliRunOptions = {},
 ): Promise<number> {
   let parsed;
   try {
@@ -296,6 +302,7 @@ export async function runCli(
   let mutatingToolSucceeded = false;
   let metrics: EvaluationMetricsCollector | undefined;
   let metricsWritten = false;
+  let abortListener: (() => void) | undefined;
   const writeMetrics = (success: boolean): void => {
     if (!parsed.metrics || !metrics || !session || metricsWritten) return;
     const report = metrics.finish(session.getSessionStats(), success);
@@ -321,6 +328,13 @@ export async function runCli(
       sessionSelection: parsed.session,
     });
     session = created.session;
+    if (runOptions.signal?.aborted) throw runOptions.signal.reason;
+    if (runOptions.signal) {
+      abortListener = () => {
+        void session?.abort?.();
+      };
+      runOptions.signal.addEventListener("abort", abortListener, { once: true });
+    }
     metrics = new EvaluationMetricsCollector(model.id, session.thinkingLevel ?? parsed.thinkingLevel);
     session.subscribe((event) => {
       metrics?.observe(event);
@@ -341,6 +355,7 @@ export async function runCli(
       }
     });
     await session.prompt(parsed.task);
+    if (runOptions.signal?.aborted) throw runOptions.signal.reason;
     writeMetrics(true);
     if (session.sessionId) {
       io.stderr(`[session] id=${session.sessionId} persisted=${session.sessionFile ? "yes" : "no"}\n`);
@@ -356,6 +371,7 @@ export async function runCli(
     io.stderr(`[error] ${sanitizeError(error)}\n`);
     return 1;
   } finally {
+    if (abortListener) runOptions.signal?.removeEventListener("abort", abortListener);
     session?.dispose();
   }
 }

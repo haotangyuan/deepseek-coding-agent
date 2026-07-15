@@ -2,7 +2,7 @@
 
 一个以 DeepSeek 模型为优先、基于 [Pi](https://github.com/earendil-works/pi) SDK 构建的轻量 Coding Agent 学习项目。
 
-当前已完成 M1–M5，并持续推进 M6/M7：显式 DeepSeek 模型、完整事件输出、安全工具审批、多轮 TUI、上下文资源透明化、可恢复的 Pi JSONL 会话，以及包含多文件修复、外部验证和成本边界的可重复评测。
+当前已完成 M1–M5，并持续推进 M6/M7：显式 DeepSeek 模型、完整事件输出、安全工具审批、多轮 TUI、上下文资源透明化、可恢复的 Pi JSONL 会话，以及包含多文件修复、测试反馈恢复和成本边界的可重复评测。
 
 ## 项目目标
 
@@ -171,9 +171,9 @@ npm run eval -- --task all --model deepseek-v4-flash --thinking high
 npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --runs 1 --max-cost-usd 0.02
 ```
 
-`--runs` 最多 5 次；默认观测成本上限为 0.02 美元，达到上限后不会开始下一次请求。单次请求的最终成本只能在 Provider 返回 usage 后得知，因此该参数不是预付费硬限额；超过上限会在汇总中标记失败。Pro 必须用 `--model deepseek-v4-pro` 显式选择。每次运行输出 `eval_result`，最后输出一个 `eval_summary`，适合保存为 NDJSON 后处理。任务、指标定义、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
+`--runs` 最多 5 次；默认观测成本上限为 0.02 美元，达到上限后不会开始下一次请求。单次请求的最终成本只能在 Provider 返回 usage 后得知，因此该参数不是预付费硬限额；超过上限会在汇总中标记失败。Pro 必须用 `--model deepseek-v4-pro` 显式选择。Schema v2 的 dry-run 同时显示逻辑样本数和最大 Provider 请求数；真实执行每个样本输出 `eval_result`，最后输出 `eval_summary`，适合保存为 NDJSON 后处理。任务、指标定义、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
 
-`repair-js` 和 `repair-multi-file` 会在系统临时目录创建有缺陷的极小项目。评测器只自动批准 fixture 内的 write/edit，拒绝 Bash；Agent 结束后由评测器运行测试，确认指定源码确实改变、原文件没有缺失、受保护文件未变且没有创建额外文件，然后删除整个临时目录。
+`repair-js`、`repair-multi-file` 和 `repair-feedback` 会在系统临时目录创建有缺陷的极小项目。评测器只自动批准 fixture 内的 write/edit，拒绝 Bash；Agent 结束后由评测器运行测试，确认指定源码确实改变、原文件没有缺失、受保护文件未变且没有创建额外文件，然后删除整个临时目录。`repair-feedback` 的隐藏回归测试位于 Agent 工作区外：第一次失败后，评测器只回填脱敏、截断且不含测试路径/堆栈的失败摘要，最多再执行一次 60 秒修复尝试。
 
 ## 当前限制
 

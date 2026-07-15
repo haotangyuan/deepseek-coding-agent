@@ -228,6 +228,54 @@ test("runCli fails before session creation when credentials are missing", async 
   assert.equal(created, false);
 });
 
+test("runCli aborts a one-shot session when its signal fires", async () => {
+  const { authStorage, modelRegistry } = createRegistry(true);
+  const controller = new AbortController();
+  let aborted = false;
+  let rejectPrompt: ((error: Error) => void) | undefined;
+  const stderr: string[] = [];
+  const result = runCli(["task"], {
+    stdout: () => undefined,
+    stderr: (text) => stderr.push(text),
+  }, {
+    cwd: process.cwd(),
+    interactiveTerminal: false,
+    authStorage,
+    modelRegistry,
+    createSession: async () => ({
+      session: {
+        subscribe: () => () => undefined,
+        prompt: () => new Promise<void>((_resolve, reject) => {
+          rejectPrompt = reject;
+        }),
+        getSessionStats: () => ({
+          sessionFile: undefined,
+          sessionId: "abort-session",
+          userMessages: 1,
+          assistantMessages: 0,
+          toolCalls: 0,
+          toolResults: 0,
+          totalMessages: 1,
+          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+          cost: 0,
+        }),
+        abort: async () => {
+          aborted = true;
+          rejectPrompt?.(new Error("aborted by test"));
+        },
+        dispose: () => undefined,
+      },
+    }),
+    runInteractive: async () => undefined,
+    getGitStatus: async () => ({ available: false, status: "" }),
+  }, { signal: controller.signal });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  controller.abort(new Error("evaluation timeout"));
+  assert.equal(await result, 1);
+  assert.equal(aborted, true);
+  assert.match(stderr.join(""), /aborted by test/);
+});
+
 test("runCli enters interactive mode only when no task and a TTY are available", async () => {
   const { authStorage, modelRegistry } = createRegistry(true);
   let started = false;
