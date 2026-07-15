@@ -3,6 +3,7 @@
 > 文档性质：持续维护的产品、架构与开发决策基线
 > 最近更新：2026-07-15
 > M1 实现基线提交：`308daaf`
+> M2 实现基线提交：`08a0dee`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 当前项目依赖：`@earendil-works/pi-coding-agent@0.80.7`
 > 最近验证的 Pi 发布版：`0.80.7`
@@ -212,6 +213,8 @@ flowchart TB
 
 ### M3：流畅的交互式终端
 
+状态：**已完成**（2026-07-15）。
+
 目标：从一次性命令升级为适合本地持续使用的多轮 Coding Agent。
 
 最小界面：
@@ -223,6 +226,20 @@ flowchart TB
 - Ctrl+C 取消当前生成，再次 Ctrl+C 退出。
 - `/help`、`/model`、`/thinking`、`/clear`、`/status`、`/exit`。
 - 请求期间允许追加 steering/follow-up，或明确排队显示。
+
+实际交付：
+
+- 无任务参数时进入 TUI；一次性 CLI 行为保持不变。
+- 精确依赖 `@earendil-works/pi-tui@0.80.7`，复用 TUI、ProcessTerminal、Editor、Markdown 和差分刷新。
+- 同一内存 AgentSession 支持连续多轮；运行中输入通过 `steer()` 排队并明确提示。
+- reasoning 默认折叠为字符数，可用 `/reasoning` 展开或折叠历史 reasoning。
+- 工具卡片显示参数、运行中、成功和失败；TUI 内完成 write/edit/bash 审批。
+- 状态栏显示运行状态、DeepSeek 模型、thinking、累计 token 和 cwd。
+- 支持 `/help`、`/status`、`/model`、`/thinking`、`/reasoning`、`/clear`、`/exit`。
+- Ctrl+C 取消活动请求；空闲时 1.5 秒内再次 Ctrl+C 退出。
+- 80×24 虚拟终端覆盖三轮、审批、工具卡片、steering、取消、模型/thinking 和清空上下文。
+- 真实 ProcessTerminal 启停和真实 DeepSeek write 拒绝 Smoke 通过，临时文件未创建。
+- 详细设计与边界见 `docs/interactive-tui.md`。
 
 实现原则：
 
@@ -388,8 +405,7 @@ npm test
 
 | 优先级 | 工作项 | 原因 |
 |---|---|---|
-| P0 | M3 精简交互 TUI | 提升日常使用和演示体验 |
-| P1 | M4 上下文透明化 | 体现对 Pi 架构的理解 |
+| P0 | M4 上下文透明化 | 体现对 Pi 架构的理解 |
 | P1 | M5 Session/Compaction | 支持长任务和恢复 |
 | P2 | M6 DeepSeek 量化优化 | 形成项目差异化 |
 | P2 | M7 演示材料与稳定性 | 面向 GitHub 和面试展示 |
@@ -423,9 +439,12 @@ npm test
 | D-006 | 自动化测试不调用真实 API | 已采纳 | 保持确定性并控制成本 |
 | D-007 | strict tool mode/FIM 暂不进入主链 | 已采纳 | Beta 能力不应成为基础可靠性依赖 |
 | D-008 | M4 信任 UI 完成前禁用发现的第三方 Extension | 已采纳 | 防止可执行扩展绕过工具审批边界 |
+| D-009 | M3 只复用 pi-tui 基础组件，不复制 Pi InteractiveMode | 已采纳 | 保持产品层精简并避免继承上游完整命令面 |
+| D-010 | 活动请求期间的新输入默认作为 steering | 已采纳 | 给长任务及时纠偏，同时清晰展示已排队状态 |
 
 ### 更新日志
 
+- **2026-07-15：** 完成 M3。加入 Pi TUI 多轮交互、reasoning 折叠、工具/审批卡片、状态栏、命令、steering 和取消。
 - **2026-07-15：** 完成 M2。加入三种审批模式、文件路径边界、修改预览、危险 Bash 阻断、Git 摘要和真实 Tool Loop 验证。
 - **2026-07-15：** 完成 M1.1。项目 SDK 升级至 `0.80.7`，补充兼容性记录并完成自动化与真实 Smoke 验证。
 - **2026-07-15：** 重写整体规划。明确本地使用和面试演示定位；加入 Pi/DeepSeek 事实基线、M1.1–M8、验收标准、体验标准和持续维护规则。

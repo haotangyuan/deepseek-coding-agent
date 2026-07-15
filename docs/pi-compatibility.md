@@ -2,6 +2,7 @@
 
 > 最近验证：2026-07-15
 > 项目 SDK：`@earendil-works/pi-coding-agent@0.80.7`
+> 项目 TUI：`@earendil-works/pi-tui@0.80.7`
 > 对照发布范围：`v0.80.6..v0.80.7`
 > Pi 研究源码：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 
@@ -29,7 +30,10 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 | `AgentSessionEvent` | M1 使用的 text/thinking/tool/retry/settled 事件保留 | 事件格式器无需修改 |
 | `ModelRegistry.find(provider,id)` | 保留 | DeepSeek-only 查找不变 |
 | `ModelRegistry.hasConfiguredAuth(model)` | 保留 | 凭据前置检查不变 |
-| `SessionManager.inMemory()` | 保留 | M1 仍使用内存会话 |
+| `SessionManager.inMemory()` | 保留 | M3 多轮仍使用内存会话 |
+| `AgentSession.prompt/steer/abort` | 保留 | M3 复用多轮、排队和取消语义 |
+| `AgentSession.setModel/setThinkingLevel/getSessionStats` | 保留 | M3 命令和状态栏直接复用 |
+| `TUI/ProcessTerminal/Editor/Markdown` | 0.80.7 类型与真实终端已验证 | M3 不复制输入编辑和差分刷新 |
 | `deepseek-v4-flash` | catalog 中存在 | 默认模型可用 |
 | `deepseek-v4-pro` | catalog 中存在 | 可显式选择，但不自动升级 |
 | DeepSeek compat | 仍为 OpenAI Completions、`thinkingFormat: "deepseek"`、reasoning replay | 继续由 Pi 处理协议兼容 |
@@ -89,6 +93,6 @@ Smoke 只记录模型、成功状态、输出长度和事件类型，不记录 A
 
 ## 7. 已知边界
 
-- M2 已验证 `DefaultResourceLoader.extensionFactories`、`tool_call` block、内置 read 工具和错误 Tool Result 回填；仍未验证持久 Session、Compaction 或 TUI。
+- M3 已验证 Pi TUI 差分渲染、多行 Editor、Markdown 流更新，以及 AgentSession 的多轮、steer、abort、模型/thinking 和统计接口；仍未验证持久 Session 或 Compaction。
 - Pi 研究 commit `dcfe36c7` 比 `v0.80.7` tag 多两个提交，不能把未发布源码行为视为 npm 包能力。
 - DeepSeek API 与 model catalog 可能独立于 Pi 发版变化；真实模型可用性仍需以官方文档、`/models` 和受控 smoke 为准。

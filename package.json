@@ -14,7 +14,8 @@
     "start": "node --env-file-if-exists=.env dist/main.js"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.80.7"
+    "@earendil-works/pi-coding-agent": "0.80.7",
+    "@earendil-works/pi-tui": "0.80.7"
   },
   "devDependencies": {
     "@types/node": "24.12.4",

@@ -2,6 +2,7 @@
 
 import {
   type AgentSessionEvent,
+  type AgentSession,
   AuthStorage,
   createAgentSession,
   type CreateAgentSessionOptions,
@@ -22,8 +23,10 @@ import {
   sanitizeError,
   usage,
 } from "./cli.ts";
+import { InteractiveMode } from "./interactive.ts";
 import {
   activeToolsForMode,
+  type ApprovalMode,
   type ApprovalRequest,
   createToolPolicy,
   createToolPolicyExtension,
@@ -48,9 +51,11 @@ interface SessionFactoryOptions {
 
 export interface CliDependencies {
   cwd: string;
+  interactiveTerminal: boolean;
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
   createSession(options: SessionFactoryOptions): Promise<{ session: SessionView }>;
+  runInteractive(options: { model: SelectedModel; approvalMode: ApprovalMode }): Promise<void>;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
 }
 
@@ -64,42 +69,74 @@ function productionDependencies(): CliDependencies {
   const cwd = process.cwd();
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
+  const getGitStatus = async (targetCwd: string): Promise<{ available: boolean; status: string }> => {
+    try {
+      const { stdout } = await promisify(execFile)("git", ["-C", targetCwd, "status", "--short"], {
+        maxBuffer: 1024 * 1024,
+      });
+      return { available: true, status: stdout.trimEnd() };
+    } catch {
+      return { available: false, status: "" };
+    }
+  };
+  const createProductionSession = async (options: SessionFactoryOptions): Promise<{ session: AgentSession }> => {
+    const agentDir = getAgentDir();
+    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const resourceLoader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      noExtensions: true,
+      extensionFactories: [createToolPolicyExtension(options.toolPolicy)],
+    });
+    await resourceLoader.reload();
+    return createAgentSession({
+      cwd,
+      authStorage: options.authStorage,
+      modelRegistry: options.modelRegistry,
+      model: options.model,
+      tools: options.tools,
+      resourceLoader,
+      settingsManager,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+  };
   return {
     cwd,
+    interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
     authStorage,
     modelRegistry,
-    createSession: async (options) => {
-      const agentDir = getAgentDir();
-      const settingsManager = SettingsManager.create(cwd, agentDir);
-      const resourceLoader = new DefaultResourceLoader({
+    createSession: createProductionSession,
+    runInteractive: async ({ model, approvalMode }) => {
+      let approvalHandler: ((request: ApprovalRequest) => Promise<boolean>) | undefined;
+      const toolPolicy = createToolPolicy({
         cwd,
-        agentDir,
-        settingsManager,
-        noExtensions: true,
-        extensionFactories: [createToolPolicyExtension(options.toolPolicy)],
+        mode: approvalMode,
+        approve: (request) => approvalHandler?.(request) ?? Promise.resolve(false),
       });
-      await resourceLoader.reload();
-      return createAgentSession({
+      const created = await createProductionSession({
+        authStorage,
+        modelRegistry,
+        model,
+        toolPolicy,
+        tools: activeToolsForMode(approvalMode),
+      });
+      const mode = new InteractiveMode({
+        session: created.session,
+        modelRegistry,
         cwd,
-        authStorage: options.authStorage,
-        modelRegistry: options.modelRegistry,
-        model: options.model,
-        tools: options.tools,
-        resourceLoader,
-        settingsManager,
-        sessionManager: SessionManager.inMemory(cwd),
+        approvalMode,
+        clearContext: () => created.session.agent.reset(),
+        getGitStatus,
       });
-    },
-    getGitStatus: async (targetCwd) => {
+      approvalHandler = (request) => mode.requestApproval(request);
       try {
-        const { stdout } = await promisify(execFile)("git", ["-C", targetCwd, "status", "--short"], {
-          maxBuffer: 1024 * 1024,
-        });
-        return { available: true, status: stdout.trimEnd() };
-      } catch {
-        return { available: false, status: "" };
+        await mode.run();
+      } finally {
+        created.session.dispose();
       }
     },
+    getGitStatus,
   };
 }
 
@@ -139,17 +176,26 @@ export async function runCli(
     io.stdout(`${usage()}\n`);
     return 0;
   }
-  if (!parsed.task) {
-    io.stderr(`Error: task text is required\n${usage()}\n`);
-    return 1;
-  }
-
   let model: SelectedModel;
   try {
     model = resolveDeepSeekModel(dependencies.modelRegistry, parsed.modelId);
   } catch (error) {
     io.stderr(`Error: ${sanitizeError(error)}\n`);
     return 1;
+  }
+
+  if (!parsed.task) {
+    if (!dependencies.interactiveTerminal) {
+      io.stderr(`Error: task text is required outside an interactive terminal\n${usage()}\n`);
+      return 1;
+    }
+    try {
+      await dependencies.runInteractive({ model, approvalMode: parsed.approvalMode });
+      return 0;
+    } catch (error) {
+      io.stderr(`[error] ${sanitizeError(error)}\n`);
+      return 1;
+    }
   }
 
   let session: SessionView | undefined;

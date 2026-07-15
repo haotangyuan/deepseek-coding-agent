@@ -1,0 +1,287 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  type AgentSessionEvent,
+  AuthStorage,
+  type CreateAgentSessionOptions,
+  ModelRegistry,
+  type SessionStats,
+} from "@earendil-works/pi-coding-agent";
+import type { Terminal } from "@earendil-works/pi-tui";
+import {
+  InteractiveMode,
+  type InteractiveSession,
+  parseInteractiveCommand,
+} from "../src/interactive.ts";
+
+type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
+type ThinkingLevel = InteractiveSession["thinkingLevel"];
+
+class FakeTerminal implements Terminal {
+  columns = 80;
+  rows = 24;
+  kittyProtocolActive = false;
+  output = "";
+  private input: ((data: string) => void) | undefined;
+
+  start(onInput: (data: string) => void): void {
+    this.input = onInput;
+  }
+
+  stop(): void {
+    this.input = undefined;
+  }
+
+  async drainInput(): Promise<void> {}
+  write(data: string): void { this.output += data; }
+  moveBy(): void {}
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(): void {}
+  setProgress(): void {}
+
+  type(text: string): void {
+    for (const character of text) this.input?.(character);
+    this.input?.("\r");
+  }
+
+  ctrlC(): void {
+    this.input?.("\x03");
+  }
+}
+
+class FakeSession implements InteractiveSession {
+  isStreaming = false;
+  thinkingLevel: ThinkingLevel = "high";
+  model: SelectedModel;
+  prompts: string[] = [];
+  steering: string[] = [];
+  aborts = 0;
+  private listener: ((event: AgentSessionEvent) => void) | undefined;
+
+  constructor(model: SelectedModel) {
+    this.model = model;
+  }
+
+  subscribe(listener: (event: AgentSessionEvent) => void): () => void {
+    this.listener = listener;
+    return () => { this.listener = undefined; };
+  }
+
+  emit(event: AgentSessionEvent): void {
+    this.listener?.(event);
+  }
+
+  async prompt(text: string): Promise<void> {
+    this.prompts.push(text);
+    this.isStreaming = true;
+    const partial = {
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: this.model.id,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "stop",
+      timestamp: 0,
+    } as const;
+    this.listener?.({
+      type: "message_update",
+      message: partial,
+      assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "private plan", partial },
+    } as unknown as AgentSessionEvent);
+    this.listener?.({
+      type: "message_update",
+      message: partial,
+      assistantMessageEvent: { type: "text_delta", contentIndex: 1, delta: `answer ${text}`, partial },
+    } as unknown as AgentSessionEvent);
+    this.isStreaming = false;
+    this.listener?.({ type: "agent_settled" });
+  }
+
+  async steer(text: string): Promise<void> {
+    this.steering.push(text);
+  }
+
+  async abort(): Promise<void> {
+    this.aborts += 1;
+    this.isStreaming = false;
+  }
+
+  async setModel(model: SelectedModel): Promise<void> {
+    this.model = model;
+  }
+
+  setThinkingLevel(level: ThinkingLevel): void {
+    this.thinkingLevel = level;
+  }
+
+  getAvailableThinkingLevels(): ThinkingLevel[] {
+    return ["off", "low", "high"];
+  }
+
+  getSessionStats(): SessionStats {
+    return {
+      sessionFile: undefined,
+      sessionId: "test",
+      userMessages: this.prompts.length,
+      assistantMessages: this.prompts.length,
+      toolCalls: 0,
+      toolResults: 0,
+      totalMessages: this.prompts.length * 2,
+      tokens: { input: this.prompts.length, output: this.prompts.length, cacheRead: 0, cacheWrite: 0, total: this.prompts.length * 2 },
+      cost: 0,
+    };
+  }
+
+  dispose(): void {}
+}
+
+function createRegistry(): ModelRegistry {
+  const auth = AuthStorage.inMemory({ deepseek: { type: "api_key", key: "test-api-key" } });
+  return ModelRegistry.inMemory(auth);
+}
+
+async function flush(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 25));
+}
+
+function plainTerminalOutput(terminal: FakeTerminal): string {
+  return terminal.output.replace(/\x1b\][^\x07]*\x07/g, "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
+}
+
+test("parses supported interactive commands without treating normal prompts as commands", () => {
+  assert.equal(parseInteractiveCommand("hello"), undefined);
+  assert.deepEqual(parseInteractiveCommand("/model deepseek-v4-pro"), { name: "model", argument: "deepseek-v4-pro" });
+  assert.deepEqual(parseInteractiveCommand("/thinking high"), { name: "thinking", argument: "high" });
+  assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
+});
+
+test("runs three turns, folds reasoning, handles approval, and exits in an 80x24 terminal", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  let clears = 0;
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    terminal,
+    clearContext: () => { clears += 1; },
+    getGitStatus: async () => ({ available: true, status: "" }),
+  });
+  const running = mode.run();
+  await flush();
+
+  terminal.type("first");
+  await flush();
+  terminal.type("second");
+  await flush();
+  terminal.type("third");
+  await flush();
+
+  assert.deepEqual(session.prompts, ["first", "second", "third"]);
+  assert.match(plainTerminalOutput(terminal), /\[thinking\] 12 chars/);
+  assert.doesNotMatch(plainTerminalOutput(terminal), /private plan/);
+
+  terminal.type("/reasoning");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /private plan/);
+
+  terminal.type("/thinking low");
+  await flush();
+  assert.equal(session.thinkingLevel, "low");
+
+  terminal.type("/model deepseek-v4-pro");
+  await flush();
+  assert.equal(session.model.id, "deepseek-v4-pro");
+
+  session.emit({
+    type: "tool_execution_start",
+    toolCallId: "read-1",
+    toolName: "read",
+    args: { path: "README.md" },
+  });
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "read-1",
+    toolName: "read",
+    result: { content: [{ type: "text", text: "read ok" }], details: undefined },
+    isError: false,
+  });
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /\[tool:read\] done read ok/);
+
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "bash-1",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "exit 1" }], details: undefined },
+    isError: true,
+  });
+  session.emit({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "deepseek",
+      model: session.model.id,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: "error",
+      errorMessage: "network unavailable",
+      timestamp: 0,
+    },
+  } as unknown as AgentSessionEvent);
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /\[tool:bash\] failed exit 1/);
+  assert.match(plainTerminalOutput(terminal), /\[error\] network unavailable/);
+
+  const approval = mode.requestApproval({ toolName: "write", summary: "write demo.txt", preview: "+demo" });
+  terminal.type("y");
+  assert.equal(await approval, true);
+
+  terminal.type("/clear");
+  await flush();
+  assert.equal(clears, 1);
+
+  terminal.type("/exit");
+  await running;
+});
+
+test("queues steering while streaming and Ctrl+C aborts the active run", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    terminal,
+    clearContext: () => undefined,
+    getGitStatus: async () => ({ available: false, status: "" }),
+  });
+  const running = mode.run();
+  await flush();
+
+  session.isStreaming = true;
+  terminal.type("adjust the plan");
+  await flush();
+  assert.deepEqual(session.steering, ["adjust the plan"]);
+
+  terminal.ctrlC();
+  await flush();
+  assert.equal(session.aborts, 1);
+
+  terminal.type("/exit");
+  await running;
+});
