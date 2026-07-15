@@ -86,7 +86,7 @@ npm test
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 
