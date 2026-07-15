@@ -89,6 +89,6 @@ Smoke 只记录模型、成功状态、输出长度和事件类型，不记录 A
 
 ## 7. 已知边界
 
-- 本次只验证 M1 的一次性 CLI 主链，没有验证持久 Session、Compaction 或 TUI；对应里程碑实现时需补充兼容测试。
+- M2 已验证 `DefaultResourceLoader.extensionFactories`、`tool_call` block、内置 read 工具和错误 Tool Result 回填；仍未验证持久 Session、Compaction 或 TUI。
 - Pi 研究 commit `dcfe36c7` 比 `v0.80.7` tag 多两个提交，不能把未发布源码行为视为 npm 包能力。
 - DeepSeek API 与 model catalog 可能独立于 Pi 发版变化；真实模型可用性仍需以官方文档、`/models` 和受控 smoke 为准。

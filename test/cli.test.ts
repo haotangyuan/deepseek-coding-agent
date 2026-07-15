@@ -18,6 +18,7 @@ test("parses the default model and task text", () => {
   assert.deepEqual(parseCliArgs(["summarize", "this", "repo"]), {
     help: false,
     modelId: "deepseek-v4-flash",
+    approvalMode: "ask",
     task: "summarize this repo",
   });
 });
@@ -30,6 +31,12 @@ test("accepts an explicit DeepSeek model and rejects other providers", () => {
 test("rejects unknown options and missing model values", () => {
   assert.throws(() => parseCliArgs(["--unknown"]), /Unknown option/);
   assert.throws(() => parseCliArgs(["--model"]), /requires a value/);
+  assert.throws(() => parseCliArgs(["--approval", "always"]), /Invalid approval mode/);
+});
+
+test("parses explicit approval modes", () => {
+  assert.equal(parseCliArgs(["--approval", "auto-read", "task"]).approvalMode, "auto-read");
+  assert.equal(parseCliArgs(["--approval=deny", "task"]).approvalMode, "deny");
 });
 
 test("resolves only an existing and authenticated DeepSeek model", () => {
@@ -90,13 +97,16 @@ test("redacts key-shaped values from errors", () => {
 test("runCli passes the explicit DeepSeek model and emits substitute events", async () => {
   const { authStorage, modelRegistry } = createRegistry(true);
   let selectedModel: SelectedModel | undefined;
+  let selectedTools: string[] = [];
   let prompt = "";
   let listener: ((event: AgentSessionEvent) => void) | undefined;
   const dependencies: CliDependencies = {
+    cwd: process.cwd(),
     authStorage,
     modelRegistry,
     createSession: async (options) => {
       selectedModel = options.model;
+      selectedTools = options.tools;
       return {
         session: {
           subscribe: (nextListener) => {
@@ -105,12 +115,20 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
           },
           prompt: async (text) => {
             prompt = text;
+            listener?.({
+              type: "tool_execution_end",
+              toolCallId: "1",
+              toolName: "bash",
+              result: { content: [] },
+              isError: false,
+            });
             listener?.({ type: "agent_settled" });
           },
           dispose: () => undefined,
         },
       };
     },
+    getGitStatus: async () => ({ available: true, status: " M README.md" }),
   };
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -122,21 +140,25 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(code, 0);
   assert.equal(selectedModel?.provider, "deepseek");
   assert.equal(selectedModel?.id, "deepseek-v4-flash");
+  assert.deepEqual(selectedTools, ["read", "write", "edit", "bash"]);
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);
+  assert.match(stderr.join(""), /git:status.*README\.md/s);
 });
 
 test("runCli fails before session creation when credentials are missing", async () => {
   const { authStorage, modelRegistry } = createRegistry(false);
   let created = false;
   const code = await runCli(["task"], { stdout: () => undefined, stderr: () => undefined }, {
+    cwd: process.cwd(),
     authStorage,
     modelRegistry,
     createSession: async () => {
       created = true;
       throw new Error("must not run");
     },
+    getGitStatus: async () => ({ available: false, status: "" }),
   });
   assert.equal(code, 1);
   assert.equal(created, false);

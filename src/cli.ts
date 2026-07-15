@@ -1,4 +1,5 @@
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
+import { APPROVAL_MODES, type ApprovalMode } from "./tool-policy.ts";
 
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
 export const DEEPSEEK_PROVIDER = "deepseek";
@@ -6,6 +7,7 @@ export const DEEPSEEK_PROVIDER = "deepseek";
 export interface CliOptions {
   help: boolean;
   modelId: string;
+  approvalMode: ApprovalMode;
   task: string;
 }
 
@@ -32,6 +34,7 @@ function readOptionValue(args: string[], index: number, option: string): { value
 export function parseCliArgs(args: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL_ID;
+  let approvalMode: ApprovalMode = "ask";
   const taskParts: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -45,6 +48,19 @@ export function parseCliArgs(args: string[]): CliOptions {
     } else if (arg.startsWith("--model=")) {
       model = arg.slice("--model=".length);
       if (!model) throw new Error("--model requires a value");
+    } else if (arg === "--approval") {
+      const parsed = readOptionValue(args, index, "--approval");
+      if (!APPROVAL_MODES.includes(parsed.value as ApprovalMode)) {
+        throw new Error(`Invalid approval mode: ${parsed.value}`);
+      }
+      approvalMode = parsed.value as ApprovalMode;
+      index = parsed.nextIndex;
+    } else if (arg.startsWith("--approval=")) {
+      const value = arg.slice("--approval=".length);
+      if (!APPROVAL_MODES.includes(value as ApprovalMode)) {
+        throw new Error(`Invalid approval mode: ${value || "(empty)"}`);
+      }
+      approvalMode = value as ApprovalMode;
     } else if (arg.startsWith("-")) {
       throw new Error(`Unknown option: ${arg}`);
     } else {
@@ -62,7 +78,7 @@ export function parseCliArgs(args: string[]): CliOptions {
   }
   if (!model) throw new Error("Model ID cannot be empty");
 
-  return { help, modelId: model, task: taskParts.join(" ").trim() };
+  return { help, modelId: model, approvalMode, task: taskParts.join(" ").trim() };
 }
 
 export function resolveDeepSeekModel(registry: ModelRegistryView, modelId: string): SelectedModel {
@@ -177,9 +193,10 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
 
 export function usage(): string {
   return [
-    "Usage: deepseek-code [--model MODEL] \"Describe the coding task\"",
+    "Usage: deepseek-code [--model MODEL] [--approval MODE] \"Describe the coding task\"",
     "",
     `Default model: ${DEFAULT_MODEL_ID}`,
     `Allowed provider: ${DEEPSEEK_PROVIDER}`,
+    "Approval modes: ask (default), auto-read, deny",
   ].join("\n");
 }
