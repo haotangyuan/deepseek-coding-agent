@@ -160,7 +160,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 ## 9. 下一步
 
-- 为 TUI 的错误分类增加更紧凑的 80 列卡片布局。
+- 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
 - 将 repair 任务各重复至少 3 次，比较短摘要对工具错误、耗时和成本的稳定影响。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。

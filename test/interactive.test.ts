@@ -329,9 +329,27 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
       timestamp: 0,
     },
   } as unknown as AgentSessionEvent);
+  session.emit({
+    type: "auto_retry_start",
+    attempt: 1,
+    maxAttempts: 3,
+    delayMs: 500,
+    errorMessage: "network unavailable",
+  });
+  session.emit({ type: "auto_retry_end", success: true, attempt: 1 });
+  session.emit({
+    type: "auto_retry_start",
+    attempt: 3,
+    maxAttempts: 3,
+    delayMs: 2000,
+    errorMessage: "503 service overloaded",
+  });
+  session.emit({ type: "auto_retry_end", success: false, attempt: 3, finalError: "503 service overloaded" });
   await flush();
-  assert.match(plainTerminalOutput(terminal), /\[tool:bash\] failed exit 1/);
-  assert.match(plainTerminalOutput(terminal), /\[error\].*category=network.*network unavailable/s);
+  assert.match(plainTerminalOutput(terminal), /TOOL FAILED · bash.*exit 1.*Agent loop continues/s);
+  assert.match(plainTerminalOutput(terminal), /PROVIDER ERROR · NETWORK.*network unavailable.*Check network/s);
+  assert.match(plainTerminalOutput(terminal), /RETRY RECOVERED · ATTEMPT 1.*Agent loop continues/s);
+  assert.match(plainTerminalOutput(terminal), /RETRY EXHAUSTED · ATTEMPT 3.*Session will return to idle/s);
 
   terminal.type("/context");
   await flush();
@@ -421,6 +439,7 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
   terminal.ctrlC();
   await flush();
   assert.equal(session.aborts, 1);
+  assert.match(plainTerminalOutput(terminal), /RUN CANCELLED.*Session ready/s);
 
   terminal.type("/exit");
   await running;

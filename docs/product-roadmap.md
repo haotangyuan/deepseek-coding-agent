@@ -238,6 +238,7 @@ flowchart TB
 - 同一内存 AgentSession 支持连续多轮；运行中输入通过 `steer()` 排队并明确提示。
 - reasoning 默认折叠为字符数，可用 `/reasoning` 展开或折叠历史 reasoning。
 - 工具卡片显示参数、运行中、成功和失败；TUI 内完成 write/edit/bash 审批。
+- Provider/工具失败、自动重试和取消使用 80 列紧凑恢复卡；Pi 的 `auto_retry_end` 驱动 recovered/exhausted 终态，不复制重试逻辑。
 - 状态栏显示运行状态、DeepSeek 模型、thinking、累计 token 和 cwd。
 - 支持 `/help`、`/status`、`/model`、`/thinking`、`/reasoning`、`/clear`、`/exit`。
 - Ctrl+C 取消活动请求；空闲时 1.5 秒内再次 Ctrl+C 退出。
@@ -496,9 +497,11 @@ npm test
 | D-024 | 测试反馈由 evaluator 生成最小摘要 | 已采纳 | 原始 TAP 路径和堆栈会诱导模型读取不可访问文件并产生工具抖动 |
 | D-025 | repair attempt 通过 AbortSignal 调用 Session abort | 已采纳 | 超时必须终止真实 Agent 运行并清理 fixture，不能只停止外层等待 |
 | D-026 | 反馈恢复使用独立内存 Session、共享临时工作区 | 已采纳 | 保持产品 CLI 复用和文件状态连续，不为评测复制 AgentSession 组装代码 |
+| D-027 | TUI 只解释 Pi 重试事件并显示恢复卡 | 已采纳 | 保持 AgentSession 为唯一重试状态机，同时让错误、恢复与下一步动作在 80 列下可理解 |
 
 ### 更新日志
 
+- **2026-07-15：** 完成 TUI 错误恢复卡。工具失败明确回填边界，Provider 错误显示分类与动作，自动重试展示 recovered/exhausted，取消后明确回到 Session ready；80×24 事件替身覆盖成功和失败路径。
 - **2026-07-15：** 完成 evaluator-owned 测试反馈恢复。加入工作区外隐藏回归、最小失败摘要、一次受预算约束的修复尝试、60 秒真实 abort 和 Schema v2 样本/请求统计。
 - **2026-07-15：** 完成 M6 错误诊断与首个 repair fixture。加入官方错误分类、TUI/CLI 可行动提示，以及临时目录中的读取、修改、测试和完整性评分。
 - **2026-07-15：** 参考 Claude Code/Codex CLI 增强本地评测。加入多文件修复、受保护文件与额外文件检查、版本化 NDJSON 汇总和请求间成本边界。

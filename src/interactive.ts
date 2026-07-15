@@ -18,10 +18,12 @@ import {
   Text,
   TUI,
   truncateToWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import { relative } from "node:path";
-import { DEEPSEEK_PROVIDER, formatDeepSeekError, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
+import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
+import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
 import type { ApprovalMode, ApprovalRequest } from "./tool-policy.ts";
 
@@ -183,6 +185,51 @@ class StatusLine implements Component {
   }
 }
 
+interface NoticeCardContent {
+  title: string;
+  detail: string;
+  action?: string;
+  footer: string;
+  tone: (text: string) => string;
+}
+
+class NoticeCard implements Component {
+  private content: NoticeCardContent;
+
+  constructor(content: NoticeCardContent) {
+    this.content = content;
+  }
+
+  setContent(content: NoticeCardContent): void {
+    this.content = content;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const available = Math.max(1, width);
+    if (available < 8) return [this.content.tone(truncateToWidth(this.content.title, available))];
+    const bodyWidth = Math.max(1, available - 4);
+    const body = (label: string, text: string, maxLines = 2): string[] => {
+      const safe = sanitizeError(text).replace(/\s+/g, " ").trim();
+      const wrapped = wrapTextWithAnsi(`${label}${safe}`, bodyWidth);
+      const visible = wrapped.slice(0, maxLines);
+      if (wrapped.length > maxLines && visible.length > 0) {
+        const last = visible.length - 1;
+        visible[last] = `${truncateToWidth(visible[last]!, Math.max(1, bodyWidth - 1), "")}…`;
+      }
+      return visible.map((line) => truncateToWidth(`│ ${line}`, available));
+    };
+    const lines = [
+      this.content.tone(truncateToWidth(`╭─ ${this.content.title}`, available)),
+      ...body("", this.content.detail),
+    ];
+    if (this.content.action) lines.push(...body("Next: ", this.content.action));
+    lines.push(this.content.tone(truncateToWidth(`╰─ ${this.content.footer}`, available)));
+    return lines;
+  }
+}
+
 class InteractiveEditor extends Container {
   private _focused = false;
   private readonly editor: Editor;
@@ -228,7 +275,8 @@ export class InteractiveMode {
   private readonly subheader: Text;
   private readonly status: StatusLine;
   private readonly editor: InteractiveEditor;
-  private readonly toolLines = new Map<string, Text>();
+  private readonly toolLines = new Map<string, Component>();
+  private retryCard: NoticeCard | undefined;
   private assistantText = "";
   private assistantComponent: Markdown | undefined;
   private readonly reasoningBlocks: Array<{ component: Text; text: string }> = [];
@@ -307,6 +355,29 @@ export class InteractiveMode {
     this.tui.requestRender();
   }
 
+  private addProviderError(error: unknown): void {
+    const diagnostic = classifyDeepSeekError(error);
+    const status = diagnostic.statusCode === undefined ? "" : ` · HTTP ${diagnostic.statusCode}`;
+    this.transcript.addChild(new NoticeCard({
+      title: `PROVIDER ERROR · ${diagnostic.category.replaceAll("_", " ").toUpperCase()}${status}`,
+      detail: sanitizeError(error).slice(0, 1000),
+      action: diagnostic.action,
+      footer: diagnostic.retryable ? "Retryable · waiting for Pi recovery" : "Manual action required",
+      tone: colors.error,
+    }));
+    this.updateStatus("provider error");
+  }
+
+  private addCancelled(): void {
+    this.transcript.addChild(new NoticeCard({
+      title: "RUN CANCELLED",
+      detail: "The active model request and tool loop were stopped.",
+      action: "Edit the prompt or submit a new task when ready.",
+      footer: "Session ready",
+      tone: colors.warning,
+    }));
+  }
+
   private updateStatus(state: string): void {
     const stats = this.session.getSessionStats();
     const model = this.session.model?.id ?? "none";
@@ -363,10 +434,14 @@ export class InteractiveMode {
         await this.session.steer(text);
         this.addSystem("message queued as steering input");
       } else {
-        void this.session.prompt(text).catch((error) => this.addError(error instanceof Error ? error.message : String(error)));
+        void this.session.prompt(text).catch((error) => {
+          this.addProviderError(error);
+          this.updateStatus("idle");
+        });
       }
     } catch (error) {
       this.addError(error instanceof Error ? error.message : String(error));
+      if (!this.session.isStreaming) this.updateStatus("idle");
     }
   }
 
@@ -681,7 +756,7 @@ export class InteractiveMode {
       this.updateStatus("cancelling");
       try {
         await this.session.abort();
-        this.addSystem("current run cancelled");
+        this.addCancelled();
         this.updateStatus("idle");
       } catch (error) {
         this.addError(error instanceof Error ? error.message : String(error));
@@ -721,7 +796,7 @@ export class InteractiveMode {
       }
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       if (event.message.stopReason === "error") {
-        this.addError(formatDeepSeekError(event.message.errorMessage ?? "provider error"));
+        this.addProviderError(event.message.errorMessage ?? "provider error");
       }
       this.assistantComponent = undefined;
       this.assistantText = "";
@@ -736,15 +811,33 @@ export class InteractiveMode {
       this.transcript.addChild(line);
       this.updateStatus(`tool ${event.toolName}`);
     } else if (event.type === "tool_execution_update") {
-      this.toolLines.get(event.toolCallId)?.setText(
-        `${colors.warning(`[tool:${event.toolName}]`)} running ${safeJson(event.partialResult)}`,
-      );
+      const line = this.toolLines.get(event.toolCallId);
+      if (line instanceof Text) {
+        line.setText(`${colors.warning(`[tool:${event.toolName}]`)} running ${safeJson(event.partialResult)}`);
+      }
     } else if (event.type === "tool_execution_end") {
       const summary = toolResultSummary(event);
       const label = event.isError ? colors.error(`[tool:${event.toolName}] failed`) : colors.success(`[tool:${event.toolName}] done`);
-      const line = this.toolLines.get(event.toolCallId) ?? new Text("", 1, 0);
-      if (!this.toolLines.has(event.toolCallId)) this.transcript.addChild(line);
-      line.setText(`${label}${summary ? ` ${summary}` : ""}`);
+      if (event.isError) {
+        const card = new NoticeCard({
+          title: `TOOL FAILED · ${event.toolName}`,
+          detail: summary || "Tool returned an error without text output.",
+          action: "The result was returned to the agent; it can retry or choose another tool.",
+          footer: "Agent loop continues",
+          tone: colors.error,
+        });
+        const previous = this.toolLines.get(event.toolCallId);
+        const index = previous ? this.transcript.children.indexOf(previous) : -1;
+        if (index === -1) this.transcript.addChild(card);
+        else this.transcript.children[index] = card;
+        this.toolLines.set(event.toolCallId, card);
+      } else {
+        const line = this.toolLines.get(event.toolCallId);
+        const text = line instanceof Text ? line : new Text("", 1, 0);
+        if (!(line instanceof Text)) this.transcript.addChild(text);
+        text.setText(`${label}${summary ? ` ${summary}` : ""}`);
+        this.toolLines.set(event.toolCallId, text);
+      }
       if (!event.isError && (event.toolName === "write" || event.toolName === "edit" || event.toolName === "bash")) {
         this.mutatingToolSucceeded = true;
       }
@@ -753,8 +846,40 @@ export class InteractiveMode {
       const count = event.steering.length + event.followUp.length;
       if (count > 0) this.updateStatus(`running | queued=${count}`);
     } else if (event.type === "auto_retry_start") {
-      this.addSystem(`retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${formatDeepSeekError(event.errorMessage, true)}`);
+      const diagnostic = classifyDeepSeekError(event.errorMessage);
+      this.retryCard = new NoticeCard({
+        title: `PROVIDER RETRY · ${event.attempt}/${event.maxAttempts} · ${event.delayMs}ms`,
+        detail: `${diagnostic.category.replaceAll("_", " ")} · ${sanitizeError(event.errorMessage).slice(0, 1000)}`,
+        action: diagnostic.action,
+        footer: "Automatic backoff in progress",
+        tone: colors.warning,
+      });
+      this.transcript.addChild(this.retryCard);
       this.updateStatus("retrying");
+    } else if (event.type === "auto_retry_end") {
+      const finalError = event.finalError ? sanitizeError(event.finalError).slice(0, 1000) : undefined;
+      const card = this.retryCard ?? new NoticeCard({
+        title: "",
+        detail: "",
+        footer: "",
+        tone: colors.warning,
+      });
+      if (!this.retryCard) this.transcript.addChild(card);
+      card.setContent(event.success
+        ? {
+            title: `RETRY RECOVERED · ATTEMPT ${event.attempt}`,
+            detail: "DeepSeek streaming resumed after automatic backoff.",
+            footer: "Agent loop continues",
+            tone: colors.success,
+          }
+        : {
+            title: `RETRY EXHAUSTED · ATTEMPT ${event.attempt}`,
+            detail: finalError ?? "DeepSeek did not recover before the retry limit.",
+            action: "Check the provider guidance above, then submit again when the issue is resolved.",
+            footer: "Session will return to idle",
+            tone: colors.error,
+          });
+      this.updateStatus(event.success ? "running" : "provider error");
     } else if (event.type === "compaction_start") {
       this.addSystem(`compaction started · reason=${event.reason}`);
       this.updateStatus("compacting");
@@ -788,6 +913,7 @@ export class InteractiveMode {
     this.assistantText = "";
     this.assistantComponent = undefined;
     this.currentReasoning = undefined;
+    this.retryCard = undefined;
   }
 
   private async showGitStatusIfChanged(): Promise<void> {

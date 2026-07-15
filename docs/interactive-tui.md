@@ -1,6 +1,6 @@
-# M3–M5 交互式终端设计
+# M3–M6 交互式终端设计
 
-> 实现版本：M3–M5
+> 实现版本：M3–M6
 > Pi SDK / TUI：`0.80.7`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 最近验证：2026-07-15
@@ -68,9 +68,11 @@ transcript 只保存当前进程内的展示组件：
 - 用户消息。
 - assistant Markdown 块。
 - reasoning 块，默认只显示字符数。
-- tool running/done/failed 卡片。
+- tool running/done/failed 卡片；失败结果明确说明已回填 Agent Loop。
 - approval waiting/approved/rejected 卡片。
-- 系统、重试、错误和 Git 状态。
+- 系统、重试、错误和 Git 状态。Provider 错误卡显示分类、HTTP 状态（若有）、脱敏详情和下一步动作；自动重试结束后原地变为 recovered/exhausted 状态。
+
+错误与恢复卡由宽度感知组件渲染，正文和动作各最多两行；在 80 列终端中保持紧凑，超长脱敏详情显示省略号。卡片只解释 Pi 事件，不创建第二套重试状态机。
 
 状态栏显示 `state | provider/model | session | tokens | cwd`。token 是 Pi 对当前 JSONL 全历史累计的 usage，不是精确实时计费器。
 
@@ -79,7 +81,7 @@ transcript 只保存当前进程内的展示组件：
 - Enter 提交；Shift+Enter 由 Pi Editor 处理为换行。
 - Session 空闲时调用 `prompt()`。
 - Session 运行时调用 `steer()`，在当前 assistant turn 的工具执行完成后、下一次模型调用前注入。
-- Ctrl+C 在运行时调用 `abort()` 并等待回到 idle。
+- Ctrl+C 在运行时调用 `abort()` 并等待回到 idle，同时留下 `RUN CANCELLED · Session ready` 恢复卡。
 - 空闲时第一次 Ctrl+C 给出提示，1.5 秒内第二次退出。
 - 审批等待时 Ctrl+C 只拒绝当前工具，不退出会话。
 
@@ -126,9 +128,11 @@ TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑
 - 连续三轮 prompt。
 - reasoning 默认折叠和历史展开。
 - tool start/end 卡片。
+- Provider 错误分类、自动重试 recovered/exhausted 卡片。
 - write 审批接受。
 - DeepSeek 模型与 thinking 切换。
 - 活动请求 steering 和 Ctrl+C abort。
+- 取消后显示 Session ready，失败或取消不会让状态栏永久停在 error/cancelling。
 - `/clear` 与 `/exit`。
 
 真实验证分为两类：
