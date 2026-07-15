@@ -13,6 +13,7 @@ import {
   type InteractiveSession,
   parseInteractiveCommand,
 } from "../src/interactive.ts";
+import type { ContextSnapshot } from "../src/context-resources.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type ThinkingLevel = InteractiveSession["thinkingLevel"];
@@ -56,10 +57,12 @@ class FakeTerminal implements Terminal {
 class FakeSession implements InteractiveSession {
   isStreaming = false;
   thinkingLevel: ThinkingLevel = "high";
+  systemPrompt = "system prompt";
   model: SelectedModel;
   prompts: string[] = [];
   steering: string[] = [];
   aborts = 0;
+  reloads = 0;
   private listener: ((event: AgentSessionEvent) => void) | undefined;
 
   constructor(model: SelectedModel) {
@@ -123,6 +126,14 @@ class FakeSession implements InteractiveSession {
     return ["off", "low", "high"];
   }
 
+  getActiveToolNames(): string[] {
+    return ["read", "write", "edit", "bash"];
+  }
+
+  async reload(): Promise<void> {
+    this.reloads += 1;
+  }
+
   getSessionStats(): SessionStats {
     return {
       sessionFile: undefined,
@@ -143,6 +154,23 @@ class FakeSession implements InteractiveSession {
 function createRegistry(): ModelRegistry {
   const auth = AuthStorage.inMemory({ deepseek: { type: "api_key", key: "test-api-key" } });
   return ModelRegistry.inMemory(auth);
+}
+
+function createSnapshot(): ContextSnapshot {
+  return {
+    projectResourcesEnabled: true,
+    systemPromptCharacters: 120,
+    estimatedSystemPromptTokens: 30,
+    activeTools: ["read", "write", "edit", "bash"],
+    agentsFiles: [{ name: "AGENTS.md", path: joinForTest("AGENTS.md"), scope: "project", characters: 42 }],
+    skills: [{ name: "review", path: joinForTest(".pi/skills/review/SKILL.md"), scope: "project", description: "Review code", modelInvocable: true }],
+    prompts: [{ name: "fix", path: joinForTest(".pi/prompts/fix.md"), scope: "project", description: "Fix prompt", characters: 20 }],
+    diagnostics: [],
+  };
+}
+
+function joinForTest(path: string): string {
+  return `${process.cwd()}/${path}`;
 }
 
 async function flush(): Promise<void> {
@@ -167,6 +195,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   const session = new FakeSession(model);
   const terminal = new FakeTerminal();
   let clears = 0;
+  const snapshot = createSnapshot();
   const mode = new InteractiveMode({
     session,
     modelRegistry: registry,
@@ -174,6 +203,11 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
     approvalMode: "ask",
     terminal,
     clearContext: () => { clears += 1; },
+    getContextSnapshot: () => snapshot,
+    setProjectResourcesEnabled: async (enabled) => {
+      snapshot.projectResourcesEnabled = enabled;
+      await session.reload();
+    },
     getGitStatus: async () => ({ available: true, status: "" }),
   });
   const running = mode.run();
@@ -243,6 +277,30 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   assert.match(plainTerminalOutput(terminal), /\[tool:bash\] failed exit 1/);
   assert.match(plainTerminalOutput(terminal), /\[error\] network unavailable/);
 
+  terminal.type("/context");
+  await flush();
+  terminal.type("/agents");
+  await flush();
+  terminal.type("/skills");
+  await flush();
+  terminal.type("/prompts");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /CONTEXT MAP/);
+  assert.match(plainTerminalOutput(terminal), /AGENTS load order/);
+  assert.match(plainTerminalOutput(terminal), /Review code/);
+  assert.match(plainTerminalOutput(terminal), /Fix prompt/);
+
+  terminal.type("/skill:review inspect this");
+  await flush();
+  terminal.type("/fix src/main.ts");
+  await flush();
+  assert.deepEqual(session.prompts.slice(-2), ["/skill:review inspect this", "/fix src/main.ts"]);
+
+  terminal.type("/resources off");
+  await flush();
+  assert.equal(snapshot.projectResourcesEnabled, false);
+  assert.equal(session.reloads, 1);
+
   const approval = mode.requestApproval({ toolName: "write", summary: "write demo.txt", preview: "+demo" });
   terminal.type("y");
   assert.equal(await approval, true);
@@ -261,6 +319,7 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
   assert.ok(model);
   const session = new FakeSession(model);
   const terminal = new FakeTerminal();
+  const snapshot = createSnapshot();
   const mode = new InteractiveMode({
     session,
     modelRegistry: registry,
@@ -268,6 +327,8 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
     approvalMode: "ask",
     terminal,
     clearContext: () => undefined,
+    getContextSnapshot: () => snapshot,
+    setProjectResourcesEnabled: async (enabled) => { snapshot.projectResourcesEnabled = enabled; },
     getGitStatus: async () => ({ available: false, status: "" }),
   });
   const running = mode.run();

@@ -21,6 +21,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { relative } from "node:path";
 import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
+import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import type { ApprovalMode, ApprovalRequest } from "./tool-policy.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
@@ -30,6 +31,7 @@ export interface InteractiveSession {
   readonly isStreaming: boolean;
   readonly model: SelectedModel | undefined;
   readonly thinkingLevel: ThinkingLevel;
+  readonly systemPrompt: string;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string): Promise<void>;
   steer(text: string): Promise<void>;
@@ -37,7 +39,9 @@ export interface InteractiveSession {
   setModel(model: SelectedModel): Promise<void>;
   setThinkingLevel(level: ThinkingLevel): void;
   getAvailableThinkingLevels(): ThinkingLevel[];
+  getActiveToolNames(): string[];
   getSessionStats(): SessionStats;
+  reload(): Promise<void>;
   dispose(): void;
 }
 
@@ -48,12 +52,15 @@ export interface InteractiveModeOptions {
   approvalMode: ApprovalMode;
   terminal?: Terminal;
   clearContext(): void;
+  getContextSnapshot(): ContextSnapshot;
+  setProjectResourcesEnabled(enabled: boolean): Promise<void>;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
 }
 
 export type InteractiveCommand =
-  | { name: "help" | "status" | "clear" | "exit" | "reasoning"; argument: string }
+  | { name: "help" | "status" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts"; argument: string }
   | { name: "model" | "thinking"; argument: string }
+  | { name: "resources"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -64,6 +71,8 @@ const colors = {
   success: (text: string) => `\x1b[32m${text}${RESET}`,
   warning: (text: string) => `\x1b[33m${text}${RESET}`,
   bold: (text: string) => `\x1b[1m${text}${RESET}`,
+  ocean: (text: string) => `\x1b[38;2;74;128;255m${text}${RESET}`,
+  ice: (text: string) => `\x1b[38;2;92;224;255m${text}${RESET}`,
 };
 
 const editorTheme: EditorTheme = {
@@ -103,6 +112,29 @@ function safeJson(value: unknown): string {
   }
 }
 
+function displayPath(path: string, cwd: string): string {
+  const fromCwd = relative(cwd, path);
+  if (fromCwd === "") return ".";
+  if (!fromCwd.startsWith("..")) return fromCwd;
+  const home = process.env.HOME;
+  if (home && path.startsWith(`${home}/`)) return `~/${path.slice(home.length + 1)}`;
+  return path;
+}
+
+function formatResourceItems(items: ContextResourceItem[], cwd: string, limit = 20): string {
+  if (items.length === 0) return "  none";
+  const visible = items.slice(0, limit).map((item, index) => {
+    const details = [item.scope, item.characters === undefined ? undefined : `${item.characters} chars`]
+      .filter((value) => value !== undefined)
+      .join(" · ");
+    const invocation = item.modelInvocable === undefined ? "" : item.modelInvocable ? " · model-visible" : " · explicit-only";
+    const description = item.description ? `\n     ${item.description}` : "";
+    return `  ${index + 1}. ${item.name} [${details}${invocation}]\n     ${displayPath(item.path, cwd)}${description}`;
+  });
+  if (items.length > limit) visible.push(`  ... ${items.length - limit} more`);
+  return visible.join("\n");
+}
+
 function toolResultSummary(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): string {
   const content = event.result.content
     .filter((item: { type: string }) => item.type === "text")
@@ -118,10 +150,14 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
   const separator = trimmed.indexOf(" ");
   const name = trimmed.slice(1, separator === -1 ? undefined : separator).toLowerCase();
   const argument = separator === -1 ? "" : trimmed.slice(separator + 1).trim();
-  if (["help", "status", "clear", "exit", "reasoning"].includes(name)) {
-    return { name: name as "help" | "status" | "clear" | "exit" | "reasoning", argument };
+  if (["help", "status", "clear", "exit", "reasoning", "context", "agents", "skills", "prompts"].includes(name)) {
+    return {
+      name: name as "help" | "status" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts",
+      argument,
+    };
   }
   if (name === "model" || name === "thinking") return { name, argument };
+  if (name === "resources") return { name, argument };
   return { name: "unknown", argument: name };
 }
 
@@ -184,6 +220,8 @@ export class InteractiveMode {
   private readonly session: InteractiveSession;
   private readonly tui: TUI;
   private readonly transcript = new Container();
+  private readonly header: Text;
+  private readonly subheader: Text;
   private readonly status: StatusLine;
   private readonly editor: InteractiveEditor;
   private readonly toolLines = new Map<string, Text>();
@@ -207,8 +245,11 @@ export class InteractiveMode {
     this.tui = new TUI(options.terminal ?? new ProcessTerminal());
     this.status = new StatusLine("");
     this.editor = new InteractiveEditor(this.tui, (text) => void this.handleSubmit(text), () => void this.handleCtrlC());
+    this.header = new Text("", 1, 0);
+    this.subheader = new Text("", 1, 0);
 
-    this.tui.addChild(new Text(colors.bold("DeepSeek Coding Agent"), 1, 0));
+    this.tui.addChild(this.header);
+    this.tui.addChild(this.subheader);
     this.tui.addChild(new Text(colors.dim("Enter submit · Shift+Enter newline · Ctrl+C cancel/exit · /help commands"), 1, 0));
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.status);
@@ -221,6 +262,7 @@ export class InteractiveMode {
     this.unsubscribe = this.session.subscribe((event) => this.handleEvent(event));
     this.addSystem(`workspace ${this.options.cwd}`);
     this.addSystem(`approval ${this.options.approvalMode}`);
+    this.addSystem("project context and tool approval are independent boundaries");
     this.tui.start();
     try {
       await new Promise<void>((resolve) => {
@@ -266,6 +308,14 @@ export class InteractiveMode {
     this.status.setText(
       `${state} | ${DEEPSEEK_PROVIDER}/${model} | thinking=${this.session.thinkingLevel} | tokens=${stats.tokens.total} | cwd=${cwd}`,
     );
+    const context = this.options.getContextSnapshot();
+    const modelLabel = model.replace(/^deepseek-v4-/, "V4 ").toUpperCase();
+    this.header.setText(`${colors.ocean("◆")} ${colors.ice(colors.bold("DEEPSEEK CODE"))}`);
+    this.subheader.setText(
+      colors.dim(
+        `${modelLabel} · THINKING ${this.session.thinkingLevel.toUpperCase()} · ${this.options.approvalMode.toUpperCase()} · PROJECT CONTEXT ${context.projectResourcesEnabled ? "ON" : "OFF"}`,
+      ),
+    );
     this.tui.requestRender();
   }
 
@@ -287,7 +337,7 @@ export class InteractiveMode {
     }
 
     const command = parseInteractiveCommand(text);
-    if (command) {
+    if (command && !(command.name === "unknown" && this.isResourceInvocation(text))) {
       await this.handleCommand(command);
       return;
     }
@@ -308,14 +358,40 @@ export class InteractiveMode {
     }
   }
 
+  private isResourceInvocation(text: string): boolean {
+    const invocation = text.slice(1).split(/\s+/, 1)[0] ?? "";
+    const snapshot = this.options.getContextSnapshot();
+    if (invocation.startsWith("skill:")) {
+      const skillName = invocation.slice("skill:".length);
+      return snapshot.skills.some((skill) => skill.name === skillName);
+    }
+    return snapshot.prompts.some((prompt) => prompt.name === invocation);
+  }
+
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
-      this.addSystem("/help /status /model [id] /thinking [level] /reasoning /clear /exit");
+      this.addSystem(
+        "/help /status /context /agents /skills /prompts /resources [on|off] /model [id] /thinking [level] /reasoning /clear /exit",
+      );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
+      const context = this.options.getContextSnapshot();
       this.addSystem(
-        `model=${this.session.model?.id ?? "none"} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
+        `model=${this.session.model?.id ?? "none"} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
       );
+    } else if (command.name === "context") {
+      this.showContextSummary();
+    } else if (command.name === "agents") {
+      const snapshot = this.options.getContextSnapshot();
+      this.addSystem(`AGENTS load order (first → last)\n${formatResourceItems(snapshot.agentsFiles, this.options.cwd)}`);
+    } else if (command.name === "skills") {
+      const snapshot = this.options.getContextSnapshot();
+      this.addSystem(`Skills (${snapshot.skills.length})\n${formatResourceItems(snapshot.skills, this.options.cwd)}`);
+    } else if (command.name === "prompts") {
+      const snapshot = this.options.getContextSnapshot();
+      this.addSystem(`Prompt templates (${snapshot.prompts.length})\n${formatResourceItems(snapshot.prompts, this.options.cwd)}`);
+    } else if (command.name === "resources") {
+      await this.handleResourcesCommand(command.argument);
     } else if (command.name === "reasoning") {
       this.showReasoning = !this.showReasoning;
       this.refreshReasoning();
@@ -342,6 +418,59 @@ export class InteractiveMode {
     }
     this.updateStatus(this.session.isStreaming ? "running" : "idle");
     this.tui.requestRender();
+  }
+
+  private showContextSummary(): void {
+    const snapshot = this.options.getContextSnapshot();
+    const agentCharacters = snapshot.agentsFiles.reduce((total, file) => total + (file.characters ?? 0), 0);
+    const modelSkills = snapshot.skills.filter((skill) => skill.modelInvocable).length;
+    const diagnosticSummary = snapshot.diagnostics.length === 0
+      ? "none"
+      : `${snapshot.diagnostics.length} (${snapshot.diagnostics.slice(0, 3).map((diagnostic) => diagnostic.type).join(", ")})`;
+    this.addSystem(
+      [
+        "CONTEXT MAP",
+        `  effective system prompt  ${snapshot.systemPromptCharacters} chars · ~${snapshot.estimatedSystemPromptTokens} tokens`,
+        `  active tools             ${snapshot.activeTools.join(", ") || "none"}`,
+        `  AGENTS                   ${snapshot.agentsFiles.length} files · ${agentCharacters} chars`,
+        `  Skills                   ${snapshot.skills.length} discovered · ${modelSkills} model-visible`,
+        `  Prompt templates         ${snapshot.prompts.length} discoverable`,
+        `  Diagnostics              ${diagnosticSummary}`,
+        `  Project resources        ${snapshot.projectResourcesEnabled ? "enabled" : "disabled"}`,
+        `  Tool approval            ${this.options.approvalMode} (independent from context trust)`,
+      ].join("\n"),
+    );
+  }
+
+  private async handleResourcesCommand(argument: string): Promise<void> {
+    const current = this.options.getContextSnapshot().projectResourcesEnabled;
+    if (!argument) {
+      this.addSystem(`project resources ${current ? "enabled" : "disabled"}; use /resources on or /resources off`);
+      return;
+    }
+    if (argument !== "on" && argument !== "off") {
+      this.addError("usage: /resources [on|off]");
+      return;
+    }
+    if (this.session.isStreaming) {
+      this.addError("project resources cannot be reloaded during an active run");
+      return;
+    }
+    const enabled = argument === "on";
+    if (enabled === current) {
+      this.addSystem(`project resources already ${enabled ? "enabled" : "disabled"}`);
+      return;
+    }
+    this.updateStatus("reloading context");
+    try {
+      await this.options.setProjectResourcesEnabled(enabled);
+      const snapshot = this.options.getContextSnapshot();
+      this.addSystem(
+        `project resources ${enabled ? "enabled" : "disabled"}; loaded AGENTS=${snapshot.agentsFiles.length} Skills=${snapshot.skills.length} Prompts=${snapshot.prompts.length}`,
+      );
+    } catch (error) {
+      this.addError(`context reload failed: ${sanitizeError(error)}`);
+    }
   }
 
   private async handleModelCommand(modelId: string): Promise<void> {

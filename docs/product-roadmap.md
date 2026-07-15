@@ -4,6 +4,7 @@
 > 最近更新：2026-07-15
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
+> M3 实现基线提交：`4d57b48`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 当前项目依赖：`@earendil-works/pi-coding-agent@0.80.7`
 > 最近验证的 Pi 发布版：`0.80.7`
@@ -255,6 +256,8 @@ flowchart TB
 
 ### M4：上下文资源透明化
 
+状态：**已完成**（2026-07-15）。
+
 目标：既复用 Pi 的 AGENTS/Skills/Prompts，又让用户知道模型实际获得了什么。
 
 功能：
@@ -265,6 +268,18 @@ flowchart TB
 - 支持临时禁用项目资源，以排查 prompt 冲突。
 - 稳定 System Prompt、工具定义和资源顺序，减少无谓上下文变化。
 - 明确信任项目文件与批准模型动作是两个不同概念。
+
+实际交付：
+
+- 直接读取 Pi `ResourceLoader` 的运行时结果，不建立第二套资源扫描器。
+- `/context` 展示有效 System Prompt 字符数、粗略 token、活动工具和资源/诊断数量。
+- `/agents`、`/skills`、`/prompts` 展示名称、真实路径、作用域和必要元数据。
+- `/skill:name` 与 Prompt Template `/name` 可直接进入 Pi `AgentSession.prompt()` 的原生展开流程。
+- `/resources on|off` 仅允许在 idle 状态切换；通过 loader override 过滤资源，再调用 `AgentSession.reload()` 重建运行时上下文。
+- 关闭项目资源时移除项目/祖先 AGENTS 和项目级 Skills/Prompts，保留 agentDir 与用户级 Skills/Prompts；该状态不持久化。
+- 工具审批模式不随上下文开关变化，避免把“是否信任指令来源”误解为“是否允许执行动作”。
+- 标题和状态栏使用原创深海蓝/冰青视觉，不使用 DeepSeek 官方 Logo 或复制其品牌界面。
+- 临时目录集成测试覆盖真实 AGENTS 顺序、资源作用域、System Prompt 变化和 reload；80×24 虚拟终端覆盖命令与显式资源调用。
 
 验收：
 
@@ -405,8 +420,8 @@ npm test
 
 | 优先级 | 工作项 | 原因 |
 |---|---|---|
-| P0 | M4 上下文透明化 | 体现对 Pi 架构的理解 |
-| P1 | M5 Session/Compaction | 支持长任务和恢复 |
+| P0 | M5 Session/Compaction | 支持长任务和恢复 |
+| Done | M4 上下文透明化 | 已完成真实资源可见性与临时过滤 |
 | P2 | M6 DeepSeek 量化优化 | 形成项目差异化 |
 | P2 | M7 演示材料与稳定性 | 面向 GitHub 和面试展示 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
@@ -441,9 +456,13 @@ npm test
 | D-008 | M4 信任 UI 完成前禁用发现的第三方 Extension | 已采纳 | 防止可执行扩展绕过工具审批边界 |
 | D-009 | M3 只复用 pi-tui 基础组件，不复制 Pi InteractiveMode | 已采纳 | 保持产品层精简并避免继承上游完整命令面 |
 | D-010 | 活动请求期间的新输入默认作为 steering | 已采纳 | 给长任务及时纠偏，同时清晰展示已排队状态 |
+| D-011 | 上下文视图只读取 Pi ResourceLoader 运行时快照 | 已采纳 | 避免第二套发现逻辑与真实请求漂移 |
+| D-012 | 项目资源开关与工具审批相互独立 | 已采纳 | 指令来源信任不能替代动作授权 |
+| D-013 | 使用原创 DeepSeek 启发的深海蓝视觉 | 已采纳 | 形成模型特色，同时避免复制官方品牌资产 |
 
 ### 更新日志
 
+- **2026-07-15：** 完成 M4。加入上下文快照、AGENTS/Skills/Prompts 命令、项目资源热重载、显式资源调用和深海蓝 TUI 视觉。
 - **2026-07-15：** 完成 M3。加入 Pi TUI 多轮交互、reasoning 折叠、工具/审批卡片、状态栏、命令、steering 和取消。
 - **2026-07-15：** 完成 M2。加入三种审批模式、文件路径边界、修改预览、危险 Bash 阻断、Git 摘要和真实 Tool Loop 验证。
 - **2026-07-15：** 完成 M1.1。项目 SDK 升级至 `0.80.7`，补充兼容性记录并完成自动化与真实 Smoke 验证。

@@ -2,7 +2,7 @@
 
 一个以 DeepSeek 模型为优先、基于 [Pi](https://github.com/earendil-works/pi) SDK 构建的轻量 Coding Agent 学习项目。
 
-当前已完成 M1–M3：显式 DeepSeek 模型、完整事件输出、默认安全的工具审批，以及基于 Pi TUI 的多轮交互终端。后续将围绕上下文治理和会话恢复逐步迭代。
+当前已完成 M1–M4：显式 DeepSeek 模型、完整事件输出、默认安全的工具审批、基于 Pi TUI 的多轮交互终端，以及可检查、可临时关闭的上下文资源。下一阶段将进入持久会话和 Compaction。
 
 ## 项目目标
 
@@ -19,7 +19,8 @@
 - 支持 `ask`、`auto-read`、`deny` 三种工具审批模式；默认 `ask`。
 - read/write/edit 受工作区路径和 symlink 边界保护；write/edit/bash 在执行前展示并确认。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
-- 无任务参数时进入交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消。
+- 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消。
+- 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。
 - 使用 Pi 内置的 Coding Agent 工具与内存会话；进程退出后不保留会话。
 - 暂未实现持久会话、Compaction、MCP 和多 Agent。
 
@@ -65,11 +66,20 @@ npm start
 /model [deepseek-model-id]
 /thinking [level]
 /reasoning
+/context
+/agents
+/skills
+/prompts
+/resources [on|off]
 /clear
 /exit
 ```
 
 Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steering 排队；Ctrl+C 取消当前运行，空闲时连续两次 Ctrl+C 退出。reasoning 默认只显示长度，通过 `/reasoning` 展开或重新折叠。
+
+`/context` 展示当前有效 System Prompt 的字符数和粗略 token、活动工具及资源数量；`/agents`、`/skills`、`/prompts` 展示真实来源路径和作用域。`/resources off` 只在当前进程内移除项目/祖先 AGENTS 和项目级 Skills/Prompts，再调用 Pi `AgentSession.reload()`；用户级资源继续保留。上下文开关不改变工具审批模式，两者是独立边界。
+
+已加载的 Skill 可用 `/skill:name 参数` 显式调用，Prompt Template 可用 `/name 参数` 调用。模型可见的 Skills 仍由 Pi 按需读取，不会由本项目复制进 System Prompt。
 
 也可以运行一次性任务：
 
@@ -125,6 +135,7 @@ npm test
 
 - TUI 当前只保留进程内单会话，不提供搜索、会话树或可持久化布局。
 - 会话只存于内存，不支持 resume、fork、clone 或 compaction。
+- `/context` 的 token 数按 4 字符约 1 token 粗估，不是 Provider tokenizer 的精确计数；资源开关重启进程后恢复开启。
 - 工具审批是产品层防误操作机制，不提供 OS 级沙箱；项目发现的第三方 Extension 当前默认禁用。
 - 不支持 MCP、多 Agent、IDE 插件或云端服务。
 
@@ -134,7 +145,7 @@ npm test
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 

@@ -1,6 +1,6 @@
-# M3 交互式终端设计
+# M3–M4 交互式终端设计
 
-> 实现版本：M3
+> 实现版本：M3–M4
 > Pi SDK / TUI：`0.80.7`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 最近验证：2026-07-15
@@ -60,7 +60,7 @@ sequenceDiagram
 
 ## 4. 页面结构与状态
 
-页面从上到下是：标题与快捷键提示、滚动 transcript、单行状态栏、多行 Editor。
+页面从上到下是：深海蓝标题与快捷键提示、滚动 transcript、单行状态栏、多行 Editor。标题使用原创 `◆ DEEPSEEK CODE` 字标和冰青/海蓝配色，不使用官方 Logo；右侧明确显示项目上下文 ON/OFF。
 
 transcript 只保存当前进程内的展示组件：
 
@@ -93,10 +93,17 @@ transcript 只保存当前进程内的展示组件：
 | `/model [id]` | 列出或切换已认证 DeepSeek 模型 |
 | `/thinking [level]` | 查看或设置当前模型支持的 thinking level |
 | `/reasoning` | 展开或折叠当前 transcript 中的 reasoning |
+| `/context` | 显示有效 System Prompt 大小、工具和资源摘要 |
+| `/agents` | 按真实加载顺序显示 AGENTS.md 路径、作用域和字符数 |
+| `/skills` | 显示 Skill 名称、路径、作用域和是否对模型可见 |
+| `/prompts` | 显示 Prompt Template 名称、路径和作用域 |
+| `/resources [on\|off]` | 查看或临时开关项目资源，并触发 Pi Session reload |
 | `/clear` | 清空 Agent transcript 和界面；累计 Session 统计仍保留 |
 | `/exit` | 取消活动运行后安全退出 |
 
 `/model` 继续通过 DeepSeek-only resolver，不能切换到 OpenAI、Anthropic 或其他 Provider。
+
+未知斜杠命令会先与当前 ResourceLoader 的 `/skill:name` 和 Prompt Template `/name` 匹配；命中后原样交给 Pi 展开。只有未命中资源时才显示 unknown command。
 
 ## 7. 审批与安全
 
@@ -129,4 +136,5 @@ TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑
 - `/clear` 清空模型上下文，但 SessionManager 的累计 usage 不归零。
 - 工具结果只展示短摘要，没有展开面板或结果搜索。
 - UI 使用固定轻量 ANSI 配色，没有主题系统。
-- M4 将增加 AGENTS、Skills、Prompt Templates 和信任状态的可见性。
+- `/context` 使用字符数除以 4 粗估 System Prompt token，不替代 Provider tokenizer。
+- 资源开关只影响当前进程，重启后默认恢复开启；持久配置留给后续真实使用反馈决定。

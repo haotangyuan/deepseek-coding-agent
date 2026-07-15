@@ -23,6 +23,11 @@ import {
   sanitizeError,
   usage,
 } from "./cli.ts";
+import {
+  captureContextSnapshot,
+  createProjectResourceFilter,
+  type ProjectResourceFilter,
+} from "./context-resources.ts";
 import { InteractiveMode } from "./interactive.ts";
 import {
   activeToolsForMode,
@@ -47,6 +52,7 @@ interface SessionFactoryOptions {
   model: SelectedModel;
   toolPolicy: ToolPolicy;
   tools: string[];
+  resourceFilter?: ProjectResourceFilter;
 }
 
 export interface CliDependencies {
@@ -67,6 +73,7 @@ export interface CliIo {
 
 function productionDependencies(): CliDependencies {
   const cwd = process.cwd();
+  const agentDir = getAgentDir();
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
   const getGitStatus = async (targetCwd: string): Promise<{ available: boolean; status: string }> => {
@@ -79,18 +86,21 @@ function productionDependencies(): CliDependencies {
       return { available: false, status: "" };
     }
   };
-  const createProductionSession = async (options: SessionFactoryOptions): Promise<{ session: AgentSession }> => {
-    const agentDir = getAgentDir();
+  const createProductionSession = async (options: SessionFactoryOptions) => {
     const settingsManager = SettingsManager.create(cwd, agentDir);
+    const resourceFilter = options.resourceFilter ?? createProjectResourceFilter(cwd, agentDir);
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
       settingsManager,
       noExtensions: true,
       extensionFactories: [createToolPolicyExtension(options.toolPolicy)],
+      skillsOverride: resourceFilter.skillsOverride,
+      promptsOverride: resourceFilter.promptsOverride,
+      agentsFilesOverride: resourceFilter.agentsFilesOverride,
     });
     await resourceLoader.reload();
-    return createAgentSession({
+    const created = await createAgentSession({
       cwd,
       authStorage: options.authStorage,
       modelRegistry: options.modelRegistry,
@@ -100,6 +110,7 @@ function productionDependencies(): CliDependencies {
       settingsManager,
       sessionManager: SessionManager.inMemory(cwd),
     });
+    return { ...created, resourceLoader, resourceFilter, agentDir };
   };
   return {
     cwd,
@@ -114,12 +125,14 @@ function productionDependencies(): CliDependencies {
         mode: approvalMode,
         approve: (request) => approvalHandler?.(request) ?? Promise.resolve(false),
       });
+      const resourceFilter = createProjectResourceFilter(cwd, agentDir);
       const created = await createProductionSession({
         authStorage,
         modelRegistry,
         model,
         toolPolicy,
         tools: activeToolsForMode(approvalMode),
+        resourceFilter,
       });
       const mode = new InteractiveMode({
         session: created.session,
@@ -127,6 +140,24 @@ function productionDependencies(): CliDependencies {
         cwd,
         approvalMode,
         clearContext: () => created.session.agent.reset(),
+        getContextSnapshot: () => captureContextSnapshot({
+          loader: created.resourceLoader,
+          cwd,
+          agentDir: created.agentDir,
+          projectResourcesEnabled: resourceFilter.isEnabled(),
+          effectiveSystemPrompt: created.session.systemPrompt,
+          activeTools: created.session.getActiveToolNames(),
+        }),
+        setProjectResourcesEnabled: async (enabled) => {
+          resourceFilter.setEnabled(enabled);
+          try {
+            await created.session.reload();
+          } catch (error) {
+            resourceFilter.setEnabled(!enabled);
+            await created.session.reload();
+            throw error;
+          }
+        },
         getGitStatus,
       });
       approvalHandler = (request) => mode.requestApproval(request);
