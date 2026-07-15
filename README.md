@@ -2,7 +2,7 @@
 
 一个以 DeepSeek 模型为优先、基于 [Pi](https://github.com/earendil-works/pi) SDK 构建的轻量 Coding Agent 学习项目。
 
-当前已完成 M1–M5：显式 DeepSeek 模型、完整事件输出、安全工具审批、多轮 TUI、上下文资源透明化，以及可恢复的 Pi JSONL 会话、分支和 Compaction。下一阶段将进入 DeepSeek 专项评测与优化。
+当前已完成 M1–M5，并建立 M6 DeepSeek 专项评测基线：显式 DeepSeek 模型、完整事件输出、安全工具审批、多轮 TUI、上下文资源透明化、可恢复的 Pi JSONL 会话，以及可重复的 thinking/工具/缓存/成本指标。
 
 ## 项目目标
 
@@ -22,6 +22,7 @@
 - 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消。
 - 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。
 - 默认使用 Pi `SessionManager` 持久化 JSONL，支持 workspace 内 continue/resume、标题、列表、树导航、fork/clone 和自动/手动 Compaction。
+- 一次性任务支持显式 `off/high/max` thinking、内存 Session 和结构化指标；固定评测默认 dry-run，只有 `--live` 才调用真实 API。
 - 暂未实现图形化会话选择器、跨工作区恢复、MCP 和多 Agent。
 
 ## 安装
@@ -104,6 +105,12 @@ npm start -- "Summarize this repository"
 npm start -- --model deepseek-v4-flash "Read README.md and summarize it"
 ```
 
+显式固定 thinking，并输出 TTFT、耗时、工具、token、cache 和成本指标：
+
+```bash
+npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with OK"
+```
+
 继续当前工作区最近会话：
 
 ```bash
@@ -155,6 +162,16 @@ npm test
 
 自动化测试使用内存 ModelRegistry、AgentSession 测试替身、80×24 虚拟终端和临时目录中的真实 Pi SessionManager，不会调用真实 API。
 
+固定 DeepSeek 评测默认只显示计划，不产生付费调用：
+
+```bash
+npm run build
+npm run eval -- --task all --model deepseek-v4-flash --thinking high
+npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --runs 1
+```
+
+`--runs` 最多 5 次；Pro 必须用 `--model deepseek-v4-pro` 显式选择。任务、指标定义、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
+
 ## 当前限制
 
 - 当前没有图形化 Session selector；恢复目标通过 `--resume <id|path>` 明确指定。
@@ -170,7 +187,7 @@ npm test
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 

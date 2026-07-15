@@ -4,13 +4,18 @@ import { APPROVAL_MODES, type ApprovalMode } from "./tool-policy.ts";
 
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
 export const DEEPSEEK_PROVIDER = "deepseek";
+export const THINKING_LEVELS = ["off", "high", "max"] as const;
+export type DeepSeekThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface CliOptions {
   help: boolean;
   modelId: string;
   modelExplicit: boolean;
+  thinkingLevel: DeepSeekThinkingLevel;
+  thinkingExplicit: boolean;
   approvalMode: ApprovalMode;
   session: SessionSelection;
+  metrics: boolean;
   task: string;
 }
 
@@ -38,8 +43,11 @@ export function parseCliArgs(args: string[]): CliOptions {
   let help = false;
   let model = DEFAULT_MODEL_ID;
   let modelExplicit = false;
+  let thinkingLevel: DeepSeekThinkingLevel = "high";
+  let thinkingExplicit = false;
   let approvalMode: ApprovalMode = "ask";
   let session: SessionSelection = { type: "new" };
+  let metrics = false;
   const taskParts: string[] = [];
 
   for (let index = 0; index < args.length; index += 1) {
@@ -55,6 +63,21 @@ export function parseCliArgs(args: string[]): CliOptions {
       model = arg.slice("--model=".length);
       modelExplicit = true;
       if (!model) throw new Error("--model requires a value");
+    } else if (arg === "--thinking") {
+      const parsed = readOptionValue(args, index, "--thinking");
+      if (!THINKING_LEVELS.includes(parsed.value as DeepSeekThinkingLevel)) {
+        throw new Error(`Invalid thinking level: ${parsed.value}`);
+      }
+      thinkingLevel = parsed.value as DeepSeekThinkingLevel;
+      thinkingExplicit = true;
+      index = parsed.nextIndex;
+    } else if (arg.startsWith("--thinking=")) {
+      const value = arg.slice("--thinking=".length);
+      if (!THINKING_LEVELS.includes(value as DeepSeekThinkingLevel)) {
+        throw new Error(`Invalid thinking level: ${value || "(empty)"}`);
+      }
+      thinkingLevel = value as DeepSeekThinkingLevel;
+      thinkingExplicit = true;
     } else if (arg === "--approval") {
       const parsed = readOptionValue(args, index, "--approval");
       if (!APPROVAL_MODES.includes(parsed.value as ApprovalMode)) {
@@ -71,6 +94,11 @@ export function parseCliArgs(args: string[]): CliOptions {
     } else if (arg === "--continue" || arg === "-c") {
       if (session.type !== "new") throw new Error("Only one session selection option is allowed");
       session = { type: "continue" };
+    } else if (arg === "--ephemeral") {
+      if (session.type !== "new") throw new Error("Only one session selection option is allowed");
+      session = { type: "memory" };
+    } else if (arg === "--metrics") {
+      metrics = true;
     } else if (arg === "--resume" || arg === "-r") {
       if (session.type !== "new") throw new Error("Only one session selection option is allowed");
       const parsed = readOptionValue(args, index, arg);
@@ -98,7 +126,17 @@ export function parseCliArgs(args: string[]): CliOptions {
   }
   if (!model) throw new Error("Model ID cannot be empty");
 
-  return { help, modelId: model, modelExplicit, approvalMode, session, task: taskParts.join(" ").trim() };
+  return {
+    help,
+    modelId: model,
+    modelExplicit,
+    thinkingLevel,
+    thinkingExplicit,
+    approvalMode,
+    session,
+    metrics,
+    task: taskParts.join(" ").trim(),
+  };
 }
 
 export function resolveDeepSeekModel(registry: ModelRegistryView, modelId: string): SelectedModel {
@@ -213,11 +251,13 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
 
 export function usage(): string {
   return [
-    "Usage: deepseek-code [--model MODEL] [--approval MODE] [--continue | --resume ID_OR_PATH] [\"task\"]",
+    "Usage: deepseek-code [--model MODEL] [--thinking LEVEL] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
     "",
     `Default model: ${DEFAULT_MODEL_ID}`,
     `Allowed provider: ${DEEPSEEK_PROVIDER}`,
+    "Thinking levels: off, high (default), max",
     "Approval modes: ask (default), auto-read, deny",
-    "Session options: --continue/-c resumes the latest workspace session; --resume/-r selects by ID or JSONL path",
+    "Session options: --continue/-c resumes latest; --resume/-r selects history; --ephemeral disables persistence",
+    "Metrics: --metrics emits one redacted JSON summary to stderr",
   ].join("\n");
 }

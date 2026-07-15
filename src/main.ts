@@ -9,6 +9,7 @@ import {
   DefaultResourceLoader,
   getAgentDir,
   ModelRegistry,
+  type SessionStats,
   type SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
@@ -18,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   DEEPSEEK_PROVIDER,
+  type DeepSeekThinkingLevel,
   formatAgentEvent,
   parseCliArgs,
   resolveDeepSeekModel,
@@ -29,6 +31,7 @@ import {
   createProjectResourceFilter,
   type ProjectResourceFilter,
 } from "./context-resources.ts";
+import { EvaluationMetricsCollector } from "./evaluation.ts";
 import { InteractiveMode } from "./interactive.ts";
 import {
   createPersistentSessionManager,
@@ -50,8 +53,10 @@ type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 interface SessionView {
   readonly sessionFile?: string;
   readonly sessionId?: string;
+  readonly thinkingLevel?: string;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string): Promise<void>;
+  getSessionStats(): SessionStats;
   dispose(): void;
 }
 
@@ -60,6 +65,7 @@ interface SessionFactoryOptions {
   modelRegistry: ModelRegistry;
   model: SelectedModel;
   restoreSavedModel: boolean;
+  thinkingLevel?: DeepSeekThinkingLevel;
   toolPolicy: ToolPolicy;
   tools: string[];
   sessionSelection: SessionSelection;
@@ -87,7 +93,13 @@ export interface CliDependencies {
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
   createSession(options: SessionFactoryOptions): Promise<{ session: SessionView }>;
-  runInteractive(options: { model: SelectedModel; restoreSavedModel: boolean; approvalMode: ApprovalMode; sessionSelection: SessionSelection }): Promise<void>;
+  runInteractive(options: {
+    model: SelectedModel;
+    restoreSavedModel: boolean;
+    thinkingLevel?: DeepSeekThinkingLevel;
+    approvalMode: ApprovalMode;
+    sessionSelection: SessionSelection;
+  }): Promise<void>;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
 }
 
@@ -138,6 +150,7 @@ function productionDependencies(): CliDependencies {
       authStorage: options.authStorage,
       modelRegistry: options.modelRegistry,
       model,
+      thinkingLevel: options.thinkingLevel,
       tools: options.tools,
       resourceLoader,
       settingsManager,
@@ -151,7 +164,7 @@ function productionDependencies(): CliDependencies {
     authStorage,
     modelRegistry,
     createSession: createProductionSession,
-    runInteractive: async ({ model, restoreSavedModel, approvalMode, sessionSelection }) => {
+    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, approvalMode, sessionSelection }) => {
       let approvalHandler: ((request: ApprovalRequest) => Promise<boolean>) | undefined;
       const toolPolicy = createToolPolicy({
         cwd,
@@ -164,6 +177,7 @@ function productionDependencies(): CliDependencies {
         modelRegistry,
         model,
         restoreSavedModel,
+        thinkingLevel,
         toolPolicy,
         tools: activeToolsForMode(approvalMode),
         sessionSelection,
@@ -254,6 +268,9 @@ export async function runCli(
     return 1;
   }
 
+  const restoreSession = parsed.session.type === "continue" || parsed.session.type === "resume";
+  const thinkingLevel = parsed.thinkingExplicit || !restoreSession ? parsed.thinkingLevel : undefined;
+
   if (!parsed.task) {
     if (!dependencies.interactiveTerminal) {
       io.stderr(`Error: task text is required outside an interactive terminal\n${usage()}\n`);
@@ -262,7 +279,8 @@ export async function runCli(
     try {
       await dependencies.runInteractive({
         model,
-        restoreSavedModel: !parsed.modelExplicit && parsed.session.type !== "new",
+        restoreSavedModel: !parsed.modelExplicit && restoreSession,
+        thinkingLevel,
         approvalMode: parsed.approvalMode,
         sessionSelection: parsed.session,
       });
@@ -276,6 +294,14 @@ export async function runCli(
   let session: SessionView | undefined;
   let wroteText = false;
   let mutatingToolSucceeded = false;
+  let metrics: EvaluationMetricsCollector | undefined;
+  let metricsWritten = false;
+  const writeMetrics = (success: boolean): void => {
+    if (!parsed.metrics || !metrics || !session || metricsWritten) return;
+    const report = metrics.finish(session.getSessionStats(), success);
+    io.stderr(`[metrics] ${JSON.stringify(report)}\n`);
+    metricsWritten = true;
+  };
   try {
     const toolPolicy = createToolPolicy({
       cwd: dependencies.cwd,
@@ -288,13 +314,16 @@ export async function runCli(
       authStorage: dependencies.authStorage,
       modelRegistry: dependencies.modelRegistry,
       model,
-      restoreSavedModel: !parsed.modelExplicit && parsed.session.type !== "new",
+      restoreSavedModel: !parsed.modelExplicit && restoreSession,
+      thinkingLevel,
       toolPolicy,
       tools,
       sessionSelection: parsed.session,
     });
     session = created.session;
+    metrics = new EvaluationMetricsCollector(model.id, session.thinkingLevel ?? parsed.thinkingLevel);
     session.subscribe((event) => {
+      metrics?.observe(event);
       if (
         event.type === "tool_execution_end" &&
         !event.isError &&
@@ -312,6 +341,7 @@ export async function runCli(
       }
     });
     await session.prompt(parsed.task);
+    writeMetrics(true);
     if (session.sessionId) {
       io.stderr(`[session] id=${session.sessionId} persisted=${session.sessionFile ? "yes" : "no"}\n`);
     }
@@ -322,6 +352,7 @@ export async function runCli(
     }
     return 0;
   } catch (error) {
+    writeMetrics(false);
     io.stderr(`[error] ${sanitizeError(error)}\n`);
     return 1;
   } finally {

@@ -40,6 +40,8 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 | `SessionManager.create/open/continueRecent/list` | 0.80.7 类型和临时目录集成测试已验证 | M5 直接使用 Pi JSONL，不自定义格式 |
 | `SessionManager.getTree/branch/createBranchedSession/forkFrom` | append-only 行为已验证 | 文本树、同文件分支、fork 与 clone |
 | `AgentSession.compact/navigateTree/waitForIdle` | 类型、源码和事件模型已核对 | 手动压缩、leaf 导航和安全退出 |
+| `CreateAgentSessionOptions.thinkingLevel` | 0.80.7 类型确认，真实 Flash high/max 与 Pro high 通过 | CLI 显式固定评测档位；resume 未显式指定时保留历史值 |
+| `AgentSession.getSessionStats` | token、cacheRead/cacheWrite、cost 类型和真实 usage 已验证 | M6 结构化指标直接读取，不自行重算 Provider token |
 | `deepseek-v4-flash` | catalog 中存在 | 默认模型可用 |
 | `deepseek-v4-pro` | catalog 中存在 | 可显式选择，但不自动升级 |
 | DeepSeek compat | 仍为 OpenAI Completions、`thinkingFormat: "deepseek"`、reasoning replay | 继续由 Pi 处理协议兼容 |
@@ -68,6 +70,20 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 安装版本与 lockfile 均为 `0.80.7`，npm audit 报告 0 个漏洞。
 
 ## 5. 验证记录
+
+2026-07-15（M6 评测基线）：
+
+| 验证 | 结果 |
+|---|---|
+| `npm run check` / `npm run build` | 通过 |
+| `npm test` | 32/32 通过，不调用真实 API |
+| Eval dry-run | 显示模型、thinking、任务和 requestCount，不调用 API |
+| Flash/high 固定任务 | exact、read 工具成功、missing-file 工具错误恢复均通过 |
+| Flash/max、Pro/high | exact 可用性 smoke 通过 |
+| Session | `--ephemeral` 使用 Pi in-memory Session，不生成 JSONL |
+| 安全 | `.env` 被 Git 忽略；输出未包含 API Key |
+
+完整数值和解释限制见 `docs/deepseek-evaluation.md`。
 
 2026-07-15（M5）：
 
@@ -134,5 +150,6 @@ Smoke 只记录模型、成功状态、输出长度和事件类型，不记录 A
 - M3 已验证 Pi TUI 差分渲染、多行 Editor、Markdown 流更新，以及 AgentSession 的多轮、steer、abort、模型/thinking 和统计接口。
 - M4 已验证 ResourceLoader 的 AGENTS 顺序、Skills/Prompts 作用域、override 和 AgentSession reload；上下文 token 仍是产品层粗估。
 - M5 已验证 Pi JSONL 的恢复、append-only tree 和 Compaction context；自动化不调用真实模型生成 summary。
+- M6 基线已验证显式 thinking、SessionStats usage 和 DeepSeek 工具错误恢复；单次 smoke 不构成模型性能结论。
 - Pi 研究 commit `dcfe36c7` 比 `v0.80.7` tag 多两个提交，不能把未发布源码行为视为 npm 包能力。
 - DeepSeek API 与 model catalog 可能独立于 Pi 发版变化；真实模型可用性仍需以官方文档、`/models` 和受控 smoke 为准。

@@ -19,8 +19,11 @@ test("parses the default model and task text", () => {
     help: false,
     modelId: "deepseek-v4-flash",
     modelExplicit: false,
+    thinkingLevel: "high",
+    thinkingExplicit: false,
     approvalMode: "ask",
     session: { type: "new" },
+    metrics: false,
     task: "summarize this repo",
   });
 });
@@ -41,6 +44,16 @@ test("rejects unknown options and missing model values", () => {
 test("parses explicit approval modes", () => {
   assert.equal(parseCliArgs(["--approval", "auto-read", "task"]).approvalMode, "auto-read");
   assert.equal(parseCliArgs(["--approval=deny", "task"]).approvalMode, "deny");
+});
+
+test("parses reproducible thinking, metrics and ephemeral options", () => {
+  const parsed = parseCliArgs(["--thinking=max", "--metrics", "--ephemeral", "task"]);
+  assert.equal(parsed.thinkingLevel, "max");
+  assert.equal(parsed.thinkingExplicit, true);
+  assert.equal(parsed.metrics, true);
+  assert.deepEqual(parsed.session, { type: "memory" });
+  assert.throws(() => parseCliArgs(["--thinking", "medium", "task"]), /Invalid thinking level/);
+  assert.throws(() => parseCliArgs(["--ephemeral", "--continue", "task"]), /Only one session selection/);
 });
 
 test("parses persistent session selection and rejects conflicts", () => {
@@ -126,6 +139,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   let selectedTools: string[] = [];
   let selectedSession = "";
   let restoreSavedModel = true;
+  let selectedThinking: string | undefined;
   let prompt = "";
   let listener: ((event: AgentSessionEvent) => void) | undefined;
   const dependencies: CliDependencies = {
@@ -138,6 +152,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
       selectedTools = options.tools;
       selectedSession = options.sessionSelection.type;
       restoreSavedModel = options.restoreSavedModel;
+      selectedThinking = options.thinkingLevel;
       return {
         session: {
           subscribe: (nextListener) => {
@@ -155,6 +170,17 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
             });
             listener?.({ type: "agent_settled" });
           },
+          getSessionStats: () => ({
+            sessionFile: undefined,
+            sessionId: "test-session",
+            userMessages: 1,
+            assistantMessages: 1,
+            toolCalls: 1,
+            toolResults: 1,
+            totalMessages: 3,
+            tokens: { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, total: 42 },
+            cost: 0.001,
+          }),
           dispose: () => undefined,
         },
       };
@@ -164,7 +190,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   };
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const code = await runCli(["--model", "deepseek-v4-flash", "say", "ok"], {
+  const code = await runCli(["--model", "deepseek-v4-flash", "--thinking", "max", "--metrics", "say", "ok"], {
     stdout: (text) => stdout.push(text),
     stderr: (text) => stderr.push(text),
   }, dependencies);
@@ -175,10 +201,12 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.deepEqual(selectedTools, ["read", "write", "edit", "bash"]);
   assert.equal(selectedSession, "new");
   assert.equal(restoreSavedModel, false);
+  assert.equal(selectedThinking, "max");
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);
   assert.match(stderr.join(""), /git:status.*README\.md/s);
+  assert.match(stderr.join(""), /\[metrics\].*"cacheHitRate":0\.75/);
 });
 
 test("runCli fails before session creation when credentials are missing", async () => {

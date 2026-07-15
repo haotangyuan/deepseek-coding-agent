@@ -5,6 +5,8 @@
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
 > M3 实现基线提交：`4d57b48`
+> M4 实现基线提交：`a68c6f5`
+> M5 实现基线提交：`679bc71`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 当前项目依赖：`@earendil-works/pi-coding-agent@0.80.7`
 > 最近验证的 Pi 发布版：`0.80.7`
@@ -328,6 +330,8 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
+当前进展（2026-07-15）：**评测基线已完成，优化实验进行中。** 已加入 `--thinking off|high|max`、`--metrics`、`--ephemeral`，建立 3 个低成本固定任务和受 `--live` 保护的 runner。指标覆盖首响应、首文本、总耗时、reasoning 字符、工具成功/错误、重试、Provider 错误、token、cache hit、成本和事件序列。5 次受控 smoke 均通过；因每格仅 1 个样本，不据此宣称 high/max 或 Flash/Pro 性能差异。详见 `docs/deepseek-evaluation.md`。
+
 实验方向：
 
 - Flash/Pro 的任务分工和显式选择，不自动产生付费升级惊喜。
@@ -439,7 +443,7 @@ npm test
 |---|---|---|
 | Done | M5 Session/Compaction | 已完成持久化、恢复、树和压缩命令 |
 | Done | M4 上下文透明化 | 已完成真实资源可见性与临时过滤 |
-| P0 | M6 DeepSeek 量化优化 | 形成项目差异化 |
+| P0 | M6 DeepSeek 量化优化 | 评测基线完成，继续做可回滚优化实验 |
 | P2 | M7 演示材料与稳定性 | 面向 GitHub 和面试展示 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
@@ -479,9 +483,13 @@ npm test
 | D-014 | 产品会话与 Pi CLI 默认目录隔离 | 已采纳 | 复用格式但避免两个产品的列表互相污染 |
 | D-015 | resume 只允许当前 cwd | 已采纳 | 会话上下文与工具工作区必须一致，跨目录显式失败 |
 | D-016 | fork/clone 创建后不在当前进程热切换 | 已采纳 | 避免绕开 AgentSessionRuntime 导致内存与 JSONL 状态漂移 |
+| D-017 | 真实评测默认 dry-run，必须显式 `--live` | 已采纳 | 避免意外付费并让请求数量在执行前可见 |
+| D-018 | 评测 CLI 只暴露 DeepSeek 有效的 `off/high/max` 档位 | 已采纳 | 官方协议中 low/medium 不形成独立 reasoning effort |
+| D-019 | 单次 smoke 只证明链路可用，不作为优化结论 | 已采纳 | 缓存状态和随机性会显著影响延迟、token 与成本 |
 
 ### 更新日志
 
+- **2026-07-15：** 建立 M6 评测基线。加入显式 thinking、内存评测 Session、结构化指标、3 个固定任务和 Flash/Pro 受控 smoke；优化实验继续进行。
 - **2026-07-15：** 完成 M5。加入 Pi JSONL 持久会话、continue/resume、标题与列表、树导航、fork/clone、Compaction 和安全退出。
 - **2026-07-15：** 完成 M4。加入上下文快照、AGENTS/Skills/Prompts 命令、项目资源热重载、显式资源调用和深海蓝 TUI 视觉。
 - **2026-07-15：** 完成 M3。加入 Pi TUI 多轮交互、reasoning 折叠、工具/审批卡片、状态栏、命令、steering 和取消。

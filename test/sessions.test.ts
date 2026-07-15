@@ -32,6 +32,16 @@ function assistantMessage(text: string): PersistedMessage {
   };
 }
 
+test("creates an in-memory session for ephemeral evaluation", async () => {
+  const manager = await createPersistentSessionManager({
+    cwd: process.cwd(),
+    sessionDir: join(process.cwd(), ".unused-sessions"),
+    selection: { type: "memory" },
+  });
+  assert.equal(manager.isPersisted(), false);
+  assert.equal(manager.getSessionFile(), undefined);
+});
+
 test("creates, lists, continues and resumes Pi JSONL sessions", async () => {
   const root = await mkdtemp(join(tmpdir(), "deepseek-sessions-"));
   const cwd = join(root, "workspace");

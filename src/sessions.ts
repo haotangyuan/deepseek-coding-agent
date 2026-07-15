@@ -8,6 +8,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 export type SessionSelection =
   | { type: "new" }
+  | { type: "memory" }
   | { type: "continue" }
   | { type: "resume"; target: string };
 
@@ -79,6 +80,7 @@ export async function createPersistentSessionManager(options: {
   sessionDir: string;
   selection: SessionSelection;
 }): Promise<SessionManager> {
+  if (options.selection.type === "memory") return SessionManager.inMemory(options.cwd);
   if (options.selection.type === "new") return SessionManager.create(options.cwd, options.sessionDir);
   if (options.selection.type === "continue") return SessionManager.continueRecent(options.cwd, options.sessionDir);
 
