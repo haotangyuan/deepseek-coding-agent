@@ -71,6 +71,19 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 
 ## 5. 验证记录
 
+2026-07-15（M6 错误诊断与 repair fixture）：
+
+| 验证 | 结果 |
+|---|---|
+| `npm run check` / `npm run build` | 通过 |
+| `npm test` | 37/37 通过，不调用真实 API |
+| DeepSeek 错误分类 | 400/401/402/422/429/500/503、网络和未知错误通过 |
+| Pi 重试边界 | 保留 `isRetryableAssistantError` 与 AgentSession backoff，不新增重试状态机 |
+| Flash/high repair-js | 读取、修改、外部测试和完整性检查通过；3 次工具成功 |
+| Fixture 安全 | 只自动批准临时目录 write/edit，拒绝 Bash，结束后删除目录 |
+
+真实修复 Smoke 只保留短输出、聚合指标和检查结果，不保存源码、reasoning 或会话。
+
 2026-07-15（M6 评测基线）：
 
 | 验证 | 结果 |
@@ -151,5 +164,6 @@ Smoke 只记录模型、成功状态、输出长度和事件类型，不记录 A
 - M4 已验证 ResourceLoader 的 AGENTS 顺序、Skills/Prompts 作用域、override 和 AgentSession reload；上下文 token 仍是产品层粗估。
 - M5 已验证 Pi JSONL 的恢复、append-only tree 和 Compaction context；自动化不调用真实模型生成 summary。
 - M6 基线已验证显式 thinking、SessionStats usage 和 DeepSeek 工具错误恢复；单次 smoke 不构成模型性能结论。
+- M6 错误分类只改善产品提示，不改变 Pi 的重试与 Provider 协议；repair fixture 不授予无人值守 Bash。
 - Pi 研究 commit `dcfe36c7` 比 `v0.80.7` tag 多两个提交，不能把未发布源码行为视为 npm 包能力。
 - DeepSeek API 与 model catalog 可能独立于 Pi 发版变化；真实模型可用性仍需以官方文档、`/models` 和受控 smoke 为准。

@@ -25,6 +25,7 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
     runs: 1,
   });
   assert.equal(parseEvalArgs(["--live", "--task", "exact", "--runs=2", "--thinking=max"]).live, true);
+  assert.equal(parseEvalArgs(["--task", "repair-js"]).task, "repair-js");
   assert.throws(() => parseEvalArgs(["--model", "openai/gpt-5"]), /only allows the deepseek provider/i);
   assert.throws(() => parseEvalArgs(["--model", "deepseek/"]), /Model ID cannot be empty/);
   assert.throws(() => parseEvalArgs(["--thinking", "medium"]), /Invalid thinking level/);
@@ -71,5 +72,27 @@ test("metrics collector records latency, reasoning, tools, cache and ordered eve
   assert.equal(metrics.toolCalls, 1);
   assert.equal(metrics.toolSuccesses, 1);
   assert.equal(metrics.cacheHitRate, 0.75);
+  assert.deepEqual(metrics.providerErrorCategories, []);
   assert.deepEqual(metrics.eventSequence, ["thinking_delta", "text_delta", "tool_execution_start", "tool_execution_end"]);
+});
+
+test("metrics collector marks classified provider errors as unsuccessful", () => {
+  const collector = new EvaluationMetricsCollector("deepseek-v4-flash", "high");
+  collector.observe({
+    type: "message_end",
+    message: { ...partial, stopReason: "error", errorMessage: "429: rate limit reached" },
+  } as unknown as AgentSessionEvent);
+  const metrics = collector.finish({
+    sessionFile: undefined,
+    sessionId: "test",
+    userMessages: 1,
+    assistantMessages: 1,
+    toolCalls: 0,
+    toolResults: 0,
+    totalMessages: 2,
+    tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    cost: 0,
+  }, true);
+  assert.equal(metrics.success, false);
+  assert.deepEqual(metrics.providerErrorCategories, ["rate_limit"]);
 });

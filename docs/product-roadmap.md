@@ -330,7 +330,7 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-15）：**评测基线已完成，优化实验进行中。** 已加入 `--thinking off|high|max`、`--metrics`、`--ephemeral`，建立 3 个低成本固定任务和受 `--live` 保护的 runner。指标覆盖首响应、首文本、总耗时、reasoning 字符、工具成功/错误、重试、Provider 错误、token、cache hit、成本和事件序列。5 次受控 smoke 均通过；因每格仅 1 个样本，不据此宣称 high/max 或 Flash/Pro 性能差异。详见 `docs/deepseek-evaluation.md`。
+当前进展（2026-07-15）：**评测与错误诊断基线已完成，优化实验进行中。** 已加入 `--thinking off|high|max`、`--metrics`、`--ephemeral`，建立 3 个低成本协议任务和 1 个隔离修复任务。指标覆盖首响应、首文本、总耗时、reasoning 字符、工具成功/错误、重试、Provider 错误分类、token、cache hit、成本和事件序列。官方 400/401/402/422/429/500/503 诊断已有自动化测试，仍由 Pi 决定和执行重试。6 次受控 smoke 均通过；因每格仅 1 个样本，不据此宣称 high/max 或 Flash/Pro 性能差异。详见 `docs/deepseek-evaluation.md`。
 
 实验方向：
 
@@ -486,9 +486,12 @@ npm test
 | D-017 | 真实评测默认 dry-run，必须显式 `--live` | 已采纳 | 避免意外付费并让请求数量在执行前可见 |
 | D-018 | 评测 CLI 只暴露 DeepSeek 有效的 `off/high/max` 档位 | 已采纳 | 官方协议中 low/medium 不形成独立 reasoning effort |
 | D-019 | 单次 smoke 只证明链路可用，不作为优化结论 | 已采纳 | 缓存状态和随机性会显著影响延迟、token 与成本 |
+| D-020 | DeepSeek 错误分类不接管 Pi 重试 | 已采纳 | 保持唯一重试状态机，只在产品层增加可行动提示 |
+| D-021 | repair 评测只自动批准临时目录 write/edit | 已采纳 | 能验证真实修改，同时不授予模型无人值守 Shell 权限 |
 
 ### 更新日志
 
+- **2026-07-15：** 完成 M6 错误诊断与首个 repair fixture。加入官方错误分类、TUI/CLI 可行动提示，以及临时目录中的读取、修改、测试和完整性评分。
 - **2026-07-15：** 建立 M6 评测基线。加入显式 thinking、内存评测 Session、结构化指标、3 个固定任务和 Flash/Pro 受控 smoke；优化实验继续进行。
 - **2026-07-15：** 完成 M5。加入 Pi JSONL 持久会话、continue/resume、标题与列表、树导航、fork/clone、Compaction 和安全退出。
 - **2026-07-15：** 完成 M4。加入上下文快照、AGENTS/Skills/Prompts 命令、项目资源热重载、显式资源调用和深海蓝 TUI 视觉。

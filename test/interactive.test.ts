@@ -331,7 +331,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   } as unknown as AgentSessionEvent);
   await flush();
   assert.match(plainTerminalOutput(terminal), /\[tool:bash\] failed exit 1/);
-  assert.match(plainTerminalOutput(terminal), /\[error\] network unavailable/);
+  assert.match(plainTerminalOutput(terminal), /\[error\].*category=network.*network unavailable/s);
 
   terminal.type("/context");
   await flush();

@@ -125,7 +125,7 @@ test("formats text, reasoning, tool and completion events", () => {
   assert.match(formatAgentEvent(toolArguments)[0]?.text ?? "", /arguments-delta.*path/);
   assert.match(formatAgentEvent(toolStart)[0]?.text ?? "", /tool:start.*README\.md/);
   assert.match(formatAgentEvent(toolEnd)[0]?.text ?? "", /tool:result/);
-  assert.equal(formatAgentEvent(providerError)[0]?.text, "[provider:error] request failed with [REDACTED]\n");
+  assert.match(formatAgentEvent(providerError)[0]?.text ?? "", /provider:error.*category=unknown.*\[REDACTED\]/);
   assert.deepEqual(formatAgentEvent({ type: "agent_settled" }), [{ channel: "stderr", text: "[agent:complete]\n" }]);
 });
 

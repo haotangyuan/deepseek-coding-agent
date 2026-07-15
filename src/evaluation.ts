@@ -1,4 +1,5 @@
 import type { AgentSessionEvent, SessionStats } from "@earendil-works/pi-coding-agent";
+import { classifyDeepSeekError, type DeepSeekErrorCategory } from "./deepseek-errors.ts";
 
 export interface EvaluationMetrics {
   schemaVersion: 1;
@@ -15,6 +16,7 @@ export interface EvaluationMetrics {
   toolErrors: number;
   retries: number;
   providerErrors: number;
+  providerErrorCategories: DeepSeekErrorCategory[];
   eventSequence: string[];
   tokens: SessionStats["tokens"];
   cacheHitRate: number;
@@ -35,6 +37,7 @@ export class EvaluationMetricsCollector {
   private toolErrors = 0;
   private retries = 0;
   private providerErrors = 0;
+  private readonly providerErrorCategories = new Set<DeepSeekErrorCategory>();
   private readonly eventSequence: string[] = [];
 
   constructor(
@@ -77,6 +80,7 @@ export class EvaluationMetricsCollector {
       event.message.stopReason === "error"
     ) {
       this.providerErrors += 1;
+      this.providerErrorCategories.add(classifyDeepSeekError(event.message.errorMessage ?? "Unknown error").category);
     }
   }
 
@@ -97,6 +101,7 @@ export class EvaluationMetricsCollector {
       toolErrors: this.toolErrors,
       retries: this.retries,
       providerErrors: this.providerErrors,
+      providerErrorCategories: [...this.providerErrorCategories],
       eventSequence: [...this.eventSequence],
       tokens: stats.tokens,
       cacheHitRate: promptTokens === 0 ? 0 : stats.tokens.cacheRead / promptTokens,

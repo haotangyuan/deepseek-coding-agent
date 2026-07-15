@@ -23,6 +23,7 @@
 - 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。
 - 默认使用 Pi `SessionManager` 持久化 JSONL，支持 workspace 内 continue/resume、标题、列表、树导航、fork/clone 和自动/手动 Compaction。
 - 一次性任务支持显式 `off/high/max` thinking、内存 Session 和结构化指标；固定评测默认 dry-run，只有 `--live` 才调用真实 API。
+- Provider 错误按 DeepSeek 官方 400/401/402/422/429/500/503 语义显示分类、是否可重试和下一步动作；原始详情先遮蔽敏感值。
 - 暂未实现图形化会话选择器、跨工作区恢复、MCP 和多 Agent。
 
 ## 安装
@@ -171,6 +172,8 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 ```
 
 `--runs` 最多 5 次；Pro 必须用 `--model deepseek-v4-pro` 显式选择。任务、指标定义、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
+
+`repair-js` 会在系统临时目录创建一个有缺陷的极小项目。评测器只自动批准 fixture 内的 write/edit，拒绝 Bash；Agent 结束后由评测器运行测试、确认测试文件未被修改，然后删除整个临时目录。
 
 ## 当前限制
 

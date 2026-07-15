@@ -20,7 +20,7 @@ import {
   truncateToWidth,
 } from "@earendil-works/pi-tui";
 import { relative } from "node:path";
-import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
+import { DEEPSEEK_PROVIDER, formatDeepSeekError, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
 import type { ApprovalMode, ApprovalRequest } from "./tool-policy.ts";
@@ -720,7 +720,9 @@ export class InteractiveMode {
         this.assistantComponent.setText(this.assistantText);
       }
     } else if (event.type === "message_end" && event.message.role === "assistant") {
-      if (event.message.stopReason === "error") this.addError(event.message.errorMessage ?? "provider error");
+      if (event.message.stopReason === "error") {
+        this.addError(formatDeepSeekError(event.message.errorMessage ?? "provider error"));
+      }
       this.assistantComponent = undefined;
       this.assistantText = "";
       this.currentReasoning = undefined;
@@ -751,7 +753,7 @@ export class InteractiveMode {
       const count = event.steering.length + event.followUp.length;
       if (count > 0) this.updateStatus(`running | queued=${count}`);
     } else if (event.type === "auto_retry_start") {
-      this.addSystem(`retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${event.errorMessage}`);
+      this.addSystem(`retry ${event.attempt}/${event.maxAttempts} in ${event.delayMs}ms: ${formatDeepSeekError(event.errorMessage, true)}`);
       this.updateStatus("retrying");
     } else if (event.type === "compaction_start") {
       this.addSystem(`compaction started · reason=${event.reason}`);

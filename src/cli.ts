@@ -1,6 +1,7 @@
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type { SessionSelection } from "./sessions.ts";
 import { APPROVAL_MODES, type ApprovalMode } from "./tool-policy.ts";
+import { describeDeepSeekError } from "./deepseek-errors.ts";
 
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
 export const DEEPSEEK_PROVIDER = "deepseek";
@@ -169,6 +170,10 @@ export function sanitizeError(error: unknown): string {
     .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s,;]+/gi, "$1[REDACTED]");
 }
 
+export function formatDeepSeekError(error: unknown, retryableOverride?: boolean): string {
+  return describeDeepSeekError(error, sanitizeError, retryableOverride);
+}
+
 export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
   if (event.type === "message_update") {
     const update = event.assistantMessageEvent;
@@ -223,7 +228,7 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
     return [
       {
         channel: "stderr",
-        text: `[provider:error] ${sanitizeError(event.message.errorMessage ?? "Unknown error")}\n`,
+        text: `[provider:error] ${formatDeepSeekError(event.message.errorMessage ?? "Unknown error")}\n`,
       },
     ];
   }
@@ -231,7 +236,7 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
     return [
       {
         channel: "stderr",
-        text: `[provider:retry] attempt=${event.attempt}/${event.maxAttempts} delayMs=${event.delayMs} ${sanitizeError(event.errorMessage)}\n`,
+        text: `[provider:retry] attempt=${event.attempt}/${event.maxAttempts} delayMs=${event.delayMs} ${formatDeepSeekError(event.errorMessage, true)}\n`,
       },
     ];
   }
@@ -239,7 +244,7 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
     return [
       {
         channel: "stderr",
-        text: `[provider:retry-failed] ${sanitizeError(event.finalError ?? "Unknown error")}\n`,
+        text: `[provider:retry-failed] ${formatDeepSeekError(event.finalError ?? "Unknown error")}\n`,
       },
     ];
   }

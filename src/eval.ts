@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { EvaluationMetrics } from "./evaluation.ts";
 import { DEFAULT_MODEL_ID, sanitizeError, THINKING_LEVELS, type DeepSeekThinkingLevel } from "./cli.ts";
+import { classifyDeepSeekError } from "./deepseek-errors.ts";
+import { runCli } from "./main.ts";
 
 interface EvalTask {
   id: string;
-  approval: "deny" | "auto-read";
+  kind: "protocol" | "repair";
+  approval: "deny" | "auto-read" | "ask";
   prompt: string;
   expected: string;
   requiredToolResult?: "success" | "error";
@@ -26,12 +32,14 @@ interface EvalOptions {
 const TASKS: EvalTask[] = [
   {
     id: "exact",
+    kind: "protocol",
     approval: "deny",
     prompt: "Reply with exactly EVAL_OK and nothing else.",
     expected: "EVAL_OK",
   },
   {
     id: "read-package",
+    kind: "protocol",
     approval: "auto-read",
     prompt: "Use the read tool on package.json, then reply with only the package name.",
     expected: "deepseek-coding-agent",
@@ -39,12 +47,25 @@ const TASKS: EvalTask[] = [
   },
   {
     id: "missing-file-recovery",
+    kind: "protocol",
     approval: "auto-read",
     prompt: "Use the read tool on __deepseek_eval_missing_file__.txt. After the expected tool error, reply with exactly RECOVERED.",
     expected: "RECOVERED",
     requiredToolResult: "error",
   },
+  {
+    id: "repair-js",
+    kind: "repair",
+    approval: "ask",
+    prompt: "Read src/math.mjs and test/math.test.mjs. Fix only src/math.mjs so the tests pass. Do not run shell commands because the evaluator will run the tests. Reply with exactly FIXED after editing.",
+    expected: "FIXED",
+    requiredToolResult: "success",
+  },
 ];
+
+const REPAIR_SOURCE = `export function add(left, right) {\n  return left - right;\n}\n`;
+const REPAIR_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { add } from "../src/math.mjs";\n\ntest("adds positive and negative numbers", () => {\n  assert.equal(add(2, 3), 5);\n  assert.equal(add(-2, 1), -1);\n});\n`;
+const execFileAsync = promisify(execFile);
 
 function readValue(args: string[], index: number, option: string): string {
   const value = args[index + 1];
@@ -106,10 +127,31 @@ function score(task: EvalTask, output: string, metrics: EvaluationMetrics | unde
   return true;
 }
 
-async function executeTask(options: EvalOptions, task: EvalTask, run: number): Promise<Record<string, unknown>> {
+function parseMetrics(stderr: string): EvaluationMetrics | undefined {
+  const match = stderr.match(/^\[metrics\] (.+)$/m);
+  return match ? JSON.parse(match[1]!) as EvaluationMetrics : undefined;
+}
+
+function failedResult(options: EvalOptions, task: EvalTask, run: number, error: unknown): Record<string, unknown> {
+  const detail = error as Error & { stderr?: string };
+  const sanitized = sanitizeError(detail.stderr || detail.message).slice(0, 500);
+  const diagnostic = classifyDeepSeekError(sanitized);
+  return {
+    task: task.id,
+    run,
+    model: options.model,
+    thinking: options.thinking,
+    passed: false,
+    error: sanitized,
+    errorCategory: diagnostic.category,
+    retryable: diagnostic.retryable,
+  };
+}
+
+async function executeProtocolTask(options: EvalOptions, task: EvalTask, run: number): Promise<Record<string, unknown>> {
   const main = fileURLToPath(new URL("./main.js", import.meta.url));
   try {
-    const { stdout, stderr } = await promisify(execFile)(process.execPath, [
+    const { stdout, stderr } = await execFileAsync(process.execPath, [
       main,
       "--ephemeral",
       "--metrics",
@@ -121,8 +163,7 @@ async function executeTask(options: EvalOptions, task: EvalTask, run: number): P
       options.thinking,
       task.prompt,
     ], { maxBuffer: 4 * 1024 * 1024 });
-    const match = stderr.match(/^\[metrics\] (.+)$/m);
-    const metrics = match ? JSON.parse(match[1]!) as EvaluationMetrics : undefined;
+    const metrics = parseMetrics(stderr);
     return {
       task: task.id,
       run,
@@ -133,16 +174,75 @@ async function executeTask(options: EvalOptions, task: EvalTask, run: number): P
       metrics,
     };
   } catch (error) {
-    const detail = error as Error & { stderr?: string };
+    return failedResult(options, task, run, error);
+  }
+}
+
+async function executeRepairTask(options: EvalOptions, task: EvalTask, run: number): Promise<Record<string, unknown>> {
+  const fixture = await mkdtemp(join(tmpdir(), "deepseek-code-eval-"));
+  const originalCwd = process.cwd();
+  try {
+    await mkdir(join(fixture, "src"));
+    await mkdir(join(fixture, "test"));
+    await writeFile(join(fixture, "src/math.mjs"), REPAIR_SOURCE);
+    await writeFile(join(fixture, "test/math.test.mjs"), REPAIR_TEST);
+    process.chdir(fixture);
+
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const code = await runCli([
+      "--ephemeral",
+      "--metrics",
+      "--approval",
+      task.approval,
+      "--model",
+      options.model,
+      "--thinking",
+      options.thinking,
+      task.prompt,
+    ], {
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+      approve: async (request) => request.toolName === "write" || request.toolName === "edit",
+    });
+
+    let testPassed = true;
+    try {
+      await execFileAsync(process.execPath, ["--test"], { cwd: fixture, timeout: 10_000, maxBuffer: 1024 * 1024 });
+    } catch {
+      testPassed = false;
+    }
+    const source = await readFile(join(fixture, "src/math.mjs"), "utf8");
+    const testSource = await readFile(join(fixture, "test/math.test.mjs"), "utf8");
+    const output = stdout.join("").trim();
+    const metrics = parseMetrics(stderr.join(""));
+    const checks = {
+      testPassed,
+      testsUnchanged: testSource === REPAIR_TEST,
+      sourceChanged: source !== REPAIR_SOURCE,
+    };
     return {
       task: task.id,
       run,
       model: options.model,
       thinking: options.thinking,
-      passed: false,
-      error: sanitizeError(detail.stderr || detail.message).slice(0, 500),
+      passed: code === 0 && score(task, output, metrics) && Object.values(checks).every(Boolean),
+      output: sanitizeError(output).slice(0, 160),
+      checks,
+      metrics,
     };
+  } catch (error) {
+    return failedResult(options, task, run, error);
+  } finally {
+    process.chdir(originalCwd);
+    await rm(fixture, { recursive: true, force: true });
   }
+}
+
+async function executeTask(options: EvalOptions, task: EvalTask, run: number): Promise<Record<string, unknown>> {
+  return task.kind === "repair"
+    ? executeRepairTask(options, task, run)
+    : executeProtocolTask(options, task, run);
 }
 
 export async function runEval(args: string[]): Promise<number> {
