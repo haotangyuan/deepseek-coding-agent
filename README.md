@@ -29,6 +29,7 @@
 - 默认使用 Pi `SessionManager` 持久化 JSONL，支持 workspace 内 continue/resume、标题、列表、树导航、fork/clone 和自动/手动 Compaction。
 - 一次性任务支持显式 `off/high/max` thinking、内存 Session 和结构化指标；固定评测默认 dry-run，只有 `--live` 才调用真实 API。
 - Provider 错误按 DeepSeek 官方 400/401/402/422/429/500/503 语义显示分类、是否可重试和下一步动作；原始详情先遮蔽敏感值。
+- 支持 `--doctor` 离线检查 Node、DeepSeek 模型与凭据存在性、Git、rg/fd、Session 可写性、TTY 和上下文资源；不会创建 Session 或调用模型。
 - 暂未实现图形化会话选择器、跨工作区恢复、MCP 和多 Agent。
 
 ## 安装
@@ -58,6 +59,14 @@ cp .env.example .env
 不要把真实密钥写入源码、README、命令历史或提交到 Git。CLI 也兼容 Pi AuthStorage 已保存的 DeepSeek 凭据；三处都没有凭据时，会在创建 AgentSession 前退出。错误输出会遮蔽常见 API Key 和 Bearer Token 形式。
 
 ## 模型选择与用法
+
+首次进入仓库时建议先运行 Doctor：
+
+```bash
+npm start -- --doctor
+```
+
+TTY 下使用原创深海蓝/冰青状态层级，重定向时自动输出无 ANSI 纯文本。`✓` 表示可用，`!` 表示可降级警告，`×` 表示启动阻断；Doctor 只检查凭据是否配置，绝不显示具体值，也不访问 DeepSeek API。
 
 直接启动多轮交互终端：
 

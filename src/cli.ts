@@ -10,6 +10,7 @@ export type DeepSeekThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface CliOptions {
   help: boolean;
+  doctor: boolean;
   modelId: string;
   modelExplicit: boolean;
   thinkingLevel: DeepSeekThinkingLevel;
@@ -43,6 +44,7 @@ function readOptionValue(args: string[], index: number, option: string): { value
 
 export function parseCliArgs(args: string[]): CliOptions {
   let help = false;
+  let doctor = false;
   let model = DEFAULT_MODEL_ID;
   let modelExplicit = false;
   let thinkingLevel: DeepSeekThinkingLevel = "high";
@@ -57,6 +59,8 @@ export function parseCliArgs(args: string[]): CliOptions {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") {
       help = true;
+    } else if (arg === "--doctor") {
+      doctor = true;
     } else if (arg === "--model") {
       const parsed = readOptionValue(args, index, "--model");
       model = parsed.value;
@@ -141,9 +145,11 @@ export function parseCliArgs(args: string[]): CliOptions {
     model = model.slice(providerSeparator + 1);
   }
   if (!model) throw new Error("Model ID cannot be empty");
+  if (doctor && taskParts.length > 0) throw new Error("--doctor does not accept task text");
 
   return {
     help,
+    doctor,
     modelId: model,
     modelExplicit,
     thinkingLevel,
@@ -272,10 +278,11 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
 
 export function usage(): string {
   return [
-    "Usage: deepseek-code [--model MODEL] [--thinking LEVEL] [--mode MODE] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
+    "Usage: deepseek-code [--doctor] [--model MODEL] [--thinking LEVEL] [--mode MODE] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
     "",
     `Default model: ${DEFAULT_MODEL_ID}`,
     `Allowed provider: ${DEEPSEEK_PROVIDER}`,
+    "Doctor: --doctor runs offline readiness checks without creating a session",
     "Thinking levels: off, high (default), max",
     "Approval modes: ask (default), auto-read, deny",
     "Agent modes: plan (read-only), build (default)",

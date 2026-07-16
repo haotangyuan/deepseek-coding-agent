@@ -107,13 +107,14 @@ flowchart TB
 
 | 能力域 | 已实现事实 | 关键源码 / 测试 | 当前成熟度 |
 |---|---|---|---|
-| 模型与认证 | 默认 Flash，只允许 DeepSeek；模型存在性、可用性和凭据预检；恢复会话仍拒绝其他 Provider | `src/cli.ts:159` `resolveDeepSeekModel()`；`src/main.ts:80` `resolveSessionModel()`；`test/cli.test.ts` | 稳定 |
-| 一次性 CLI | 支持任务、模型、thinking、审批、Plan/Build、会话选择、ephemeral 和 metrics | `src/cli.ts:44` `parseCliArgs()`；`src/main.ts:266` `runCli()` | 稳定 |
-| 事件输出 | text、thinking、tool、retry、error、complete 分通道输出并脱敏 | `src/cli.ts:193` `formatAgentEvent()`；`test/cli.test.ts` | 稳定 |
-| Agent Loop | 直接通过 Pi `createAgentSession()`，不复制循环 | `src/main.ts:122` `productionDependencies()`；`src/main.ts:158` | 稳定，依赖 Pi |
+| 启动诊断 | `--doctor` 离线检查运行时、模型/凭据存在性、Git、rg/fd、Session、TTY 和资源；彩色/纯文本双输出 | `src/doctor.ts:237` `collectDoctorReport()`；`test/doctor.test.ts` | 稳定；不调用模型 |
+| 模型与认证 | 默认 Flash，只允许 DeepSeek；模型存在性、可用性和凭据预检；恢复会话仍拒绝其他 Provider | `src/cli.ts:165` `resolveDeepSeekModel()`；`src/main.ts:81` `resolveSessionModel()`；`test/cli.test.ts` | 稳定 |
+| 一次性 CLI | 支持任务、模型、thinking、审批、Plan/Build、会话选择、ephemeral 和 metrics | `src/cli.ts:45` `parseCliArgs()`；`src/main.ts:276` `runCli()` | 稳定 |
+| 事件输出 | text、thinking、tool、retry、error、complete 分通道输出并脱敏 | `src/cli.ts:199` `formatAgentEvent()`；`test/cli.test.ts` | 稳定 |
+| Agent Loop | 直接通过 Pi `createAgentSession()`，不复制循环 | `src/main.ts:124` `productionDependencies()`；`src/main.ts:160` | 稳定，依赖 Pi |
 | 仓库探索 | read、ls、grep；受 cwd、realpath、symlink 和敏感路径保护 | `src/tool-policy.ts:96`、`:233`；`test/tool-policy.test.ts` | 可用；缺 find 依赖诊断 |
 | 修改与命令 | write/edit/bash 默认询问；diff 预览；危险命令阻断；Bash 可按完全相同命令在进程内授权 | `src/tool-policy.ts:134`、`:147`、`:197`、`:239` | 可用；缺本轮撤销 |
-| Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:227` | 稳定 |
+| Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
 | 交互 TUI | 多轮、Markdown、折叠 thinking、工具卡、审批、steering、取消、恢复卡和状态栏 | `src/interactive.ts:279` `InteractiveMode`；`:837` `handleEvent()`；`test/interactive.test.ts` | 可用；导航效率不足 |
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；可临时过滤项目资源并 reload | `src/context-resources.ts:61`、`:92`；`test/context-resources.test.ts` | 稳定；缺启动信任选择 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；限制当前 cwd | `src/sessions.ts:78`、`:130`；`test/sessions.test.ts` | 机制完整；交互入口粗糙 |
@@ -122,7 +123,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 56 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、SessionManager 和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 60 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、SessionManager、Doctor 和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -190,6 +191,8 @@ flowchart TB
 
 ### P0-A：运行基线与 Doctor
 
+状态：**已完成（2026-07-16）**。
+
 目标：进入任何本地仓库时，先知道“能不能安全、稳定地运行”。
 
 功能：
@@ -197,9 +200,18 @@ flowchart TB
 - `--doctor` 或 `doctor` 子命令，完全不调用模型。
 - 检查 Node 版本、Git 仓库、工作树状态、rg、可选 fd、终端 TTY/颜色、Session 目录可写性。
 - 只判断 DeepSeek 凭据是否存在，不显示值；验证默认模型是否在当前 catalog 且可用。
-- 展示当前 SDK、Pi 研究基线、cwd、默认 mode/approval 和项目资源数量。
-- 将 find 标记为“可选能力”：fd 可用才加入工具集合，否则给出一次性安装提示，不在运行中突然失败。
+- 展示当前产品/SDK 版本、cwd、模型和项目资源数量；Pi 研究 SHA 继续由版本化文档记录。
+- 将 find 标记为“可选能力”：当前只诊断 fd，不自动改变稳定工具集合；是否开放 find 留给后续独立评测。
 - 建立 Pi 升级门：新发布版先做类型/事件/模型目录 diff，再升级精确依赖。
+
+实际交付：
+
+- `--doctor` 在解析后、模型认证阻断和 Session 创建之前单独执行。
+- 读取 Pi ModelRegistry catalog 与 `hasConfiguredAuth()`，只报告凭据存在性。
+- 检查系统或 Pi managed-bin 中的 rg/fd；rg/fd 不触发下载，fd 缺失明确保持 find 禁用。
+- 加载 `noExtensions` ResourceLoader，仅统计 AGENTS、Skills、Prompts 和 diagnostics。
+- TTY 使用深海蓝/冰青语义色，非 TTY/`NO_COLOR` 输出纯文本；长 cwd 按终端宽度省略。
+- 阻断返回退出码 1；可降级警告仍返回 0。Doctor 不创建 Session、不发送请求。
 
 验收：
 
@@ -344,11 +356,11 @@ flowchart TB
 
 ## 11. 接下来四个可直接开工的迭代
 
-### Iteration 1：Doctor 与 Pi 兼容门
+### Iteration 1：Doctor 与 Pi 兼容门（已完成）
 
 预计修改：`src/doctor.ts`、`src/cli.ts`、`src/main.ts`、对应测试和文档。
 
-成功标准：不调用 API 即可一次说明当前环境是否能运行；明确 fd/find 降级；记录 Pi `0.80.7` 到下一发布版的兼容风险。
+完成证据：60/60 自动化通过；非 TTY 与 100×30 TTY smoke 均完成；本机只报告 fd 可选能力警告，未调用 API。
 
 ### Iteration 2：命令/文件补全与 Session Selector
 

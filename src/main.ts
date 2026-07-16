@@ -34,6 +34,7 @@ import {
 } from "./context-resources.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import { EvaluationMetricsCollector } from "./evaluation.ts";
+import { collectDoctorReport, type DoctorReport, renderDoctorReport } from "./doctor.ts";
 import { InteractiveMode } from "./interactive.ts";
 import {
   createPersistentSessionManager,
@@ -106,6 +107,7 @@ export interface CliDependencies {
     agentMode: AgentMode;
     sessionSelection: SessionSelection;
   }): Promise<void>;
+  runDoctor(modelId: string): Promise<DoctorReport>;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
 }
 
@@ -173,6 +175,14 @@ function productionDependencies(): CliDependencies {
     interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
     authStorage,
     modelRegistry,
+    runDoctor: (modelId) => collectDoctorReport({
+      cwd,
+      agentDir,
+      sessionDir,
+      modelRegistry,
+      modelId,
+      interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    }),
     createSession: createProductionSession,
     runInteractive: async ({ model, restoreSavedModel, thinkingLevel, approvalMode, agentMode, sessionSelection }) => {
       let approvalHandler: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
@@ -280,6 +290,17 @@ export async function runCli(
   if (parsed.help) {
     io.stdout(`${usage()}\n`);
     return 0;
+  }
+  if (parsed.doctor) {
+    try {
+      const report = await dependencies.runDoctor(parsed.modelId);
+      const color = dependencies.interactiveTerminal && process.env.NO_COLOR === undefined;
+      io.stdout(renderDoctorReport(report, color, process.stdout.columns ?? 80));
+      return report.status === "fail" ? 1 : 0;
+    } catch (error) {
+      io.stderr(`[doctor:error] ${sanitizeError(error)}\n`);
+      return 1;
+    }
   }
   let model: SelectedModel;
   try {

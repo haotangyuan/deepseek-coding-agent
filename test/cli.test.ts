@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import { AuthStorage, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { formatAgentEvent, parseCliArgs, resolveDeepSeekModel, sanitizeError } from "../src/cli.ts";
+import type { DoctorReport } from "../src/doctor.ts";
 import { type CliDependencies, resolveSessionModel, runCli } from "../src/main.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
@@ -14,9 +15,21 @@ function createRegistry(configured: boolean): { authStorage: AuthStorage; modelR
   return { authStorage, modelRegistry: ModelRegistry.inMemory(authStorage) };
 }
 
+function doctorReport(status: DoctorReport["status"] = "pass"): DoctorReport {
+  return {
+    status,
+    productVersion: "0.1.0",
+    sdkVersion: "0.80.7",
+    cwd: process.cwd(),
+    modelId: "deepseek-v4-flash",
+    checks: [],
+  };
+}
+
 test("parses the default model and task text", () => {
   assert.deepEqual(parseCliArgs(["summarize", "this", "repo"]), {
     help: false,
+    doctor: false,
     modelId: "deepseek-v4-flash",
     modelExplicit: false,
     thinkingLevel: "high",
@@ -41,6 +54,7 @@ test("rejects unknown options and missing model values", () => {
   assert.throws(() => parseCliArgs(["--model"]), /requires a value/);
   assert.throws(() => parseCliArgs(["--approval", "always"]), /Invalid approval mode/);
   assert.throws(() => parseCliArgs(["--mode", "review"]), /Invalid agent mode/);
+  assert.throws(() => parseCliArgs(["--doctor", "task"]), /does not accept task text/);
 });
 
 test("parses explicit approval modes", () => {
@@ -205,6 +219,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
       };
     },
     runInteractive: async () => undefined,
+    runDoctor: async () => doctorReport(),
     getGitStatus: async () => ({ available: true, status: " M README.md" }),
   };
   const stdout: string[] = [];
@@ -245,6 +260,7 @@ test("runCli fails before session creation when credentials are missing", async 
       throw new Error("must not run");
     },
     runInteractive: async () => undefined,
+    runDoctor: async () => doctorReport(),
     getGitStatus: async () => ({ available: false, status: "" }),
   });
   assert.equal(code, 1);
@@ -290,6 +306,7 @@ test("runCli aborts a one-shot session when its signal fires", async () => {
       },
     }),
     runInteractive: async () => undefined,
+    runDoctor: async () => doctorReport(),
     getGitStatus: async () => ({ available: false, status: "" }),
   }, { signal: controller.signal });
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -316,6 +333,7 @@ test("runCli enters interactive mode only when no task and a TTY are available",
       assert.equal(approvalMode, "ask");
       assert.equal(agentMode, "build");
     },
+    runDoctor: async () => doctorReport(),
     getGitStatus: async () => ({ available: false, status: "" }),
   };
 
@@ -326,4 +344,38 @@ test("runCli enters interactive mode only when no task and a TTY are available",
   const stderr: string[] = [];
   assert.equal(await runCli([], { stdout: () => undefined, stderr: (text) => stderr.push(text) }, dependencies), 1);
   assert.match(stderr.join(""), /outside an interactive terminal/);
+});
+
+test("runCli doctor is offline, bypasses credential resolution, and reflects blockers", async () => {
+  const { authStorage, modelRegistry } = createRegistry(false);
+  let sessionCreated = false;
+  let inspectedModel = "";
+  const stdout: string[] = [];
+  const dependencies: CliDependencies = {
+    cwd: process.cwd(),
+    interactiveTerminal: false,
+    authStorage,
+    modelRegistry,
+    createSession: async () => {
+      sessionCreated = true;
+      throw new Error("must not create a session");
+    },
+    runInteractive: async () => undefined,
+    runDoctor: async (modelId) => {
+      inspectedModel = modelId;
+      return doctorReport("fail");
+    },
+    getGitStatus: async () => ({ available: false, status: "" }),
+  };
+
+  const code = await runCli(["--doctor", "--model", "deepseek-v4-flash"], {
+    stdout: (text) => stdout.push(text),
+    stderr: () => undefined,
+  }, dependencies);
+
+  assert.equal(code, 1);
+  assert.equal(inspectedModel, "deepseek-v4-flash");
+  assert.equal(sessionCreated, false);
+  assert.doesNotMatch(stdout.join(""), /\u001b\[/);
+  assert.match(stdout.join(""), /DeepSeek Code Doctor/);
 });
