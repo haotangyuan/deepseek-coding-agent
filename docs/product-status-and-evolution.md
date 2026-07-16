@@ -115,7 +115,7 @@ flowchart TB
 | 仓库探索 | read、ls、grep；受 cwd、realpath、symlink 和敏感路径保护 | `src/tool-policy.ts:96`、`:233`；`test/tool-policy.test.ts` | 可用；缺 find 依赖诊断 |
 | 修改与命令 | write/edit/bash 默认询问；审批 diff；本轮聚合 `/diff`；冲突安全 `/undo confirm`；Bash 精确授权 | `src/tool-policy.ts`；`src/checkpoints.ts` `TurnCheckpointManager`；`test/checkpoints.test.ts` | write/edit 可逆；Bash 副作用不覆盖 |
 | Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
-| 交互 TUI | 多轮、Markdown、折叠 thinking、工具卡、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`；`src/autocomplete.ts` `createInteractiveAutocompleteProvider()`；`test/interactive.test.ts`、`test/autocomplete.test.ts` | 日用可用；工具卡仍需折叠 |
+| 交互 TUI | 多轮、Markdown、折叠 thinking、可展开工具卡、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`、`ToolActivityCard`；`src/autocomplete.ts`；`test/interactive.test.ts` | 日用可用；缺结果搜索 |
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；可临时过滤项目资源并 reload | `src/context-resources.ts:61`、`:92`；`test/context-resources.test.ts` | 稳定；缺启动信任选择 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；Pi 选择器支持会话热切换和树导航，仍限制当前 cwd | `src/sessions.ts` `createSessionControls()`；`src/interactive.ts` `showSessions()`、`handleTree()`；对应 Session/TUI 测试 | 机制与主要交互完整 |
 | Completion Evidence 与验证 | 记录修改、diff、验证和错误；`/verify` 只预览候选，`/verify confirm` 才新增一次 Agent 回合 | `src/completion-evidence.ts`；`src/validation-suggestions.ts`；`src/interactive.ts` `handleVerify()` | 显式闭环可用；不自动 Gate |
@@ -123,7 +123,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 77 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 78 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -138,9 +138,9 @@ flowchart TB
 
 ### 5.2 仍然会造成日常摩擦
 
-1. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
-2. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
-3. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
+1. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
+2. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
+3. **工具结果缺少搜索**：卡片可展开 tail 并能定位 Pi 完整输出文件，但还不能在 TUI 内搜索长日志。
 4. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
 
 ## 6. 外部产品带来的设计启发
@@ -216,7 +216,7 @@ flowchart TB
 
 ### P0-B：TUI 导航与输入效率
 
-状态：**主要导航已完成（2026-07-16）；工具卡折叠留作独立 UI 优化。**
+状态：**已完成（2026-07-16）。**
 
 目标：减少记命令、复制路径和手输 Session ID 的摩擦。
 
@@ -241,6 +241,7 @@ flowchart TB
 - Pi 选择器的 All 范围可以浏览产品 Session 目录，但跨工作区选择不会改变当前工具 cwd，而是明确拒绝并提示到目标目录启动。
 - `/tree` 直接复用 Pi `TreeSelectorComponent` 的搜索、过滤、折叠和节点选择；`/sessions list`、`/tree list` 与显式 entry 参数保留纯文本入口。
 - 默认模型与非显式 thinking 在选择历史 Session 后按 Pi Session 上下文恢复；显式 CLI 模型和 thinking 仍优先。
+- `/tool` 默认定位最近卡片，也接受唯一 ID 前缀；流式 update 保留 start 事件中的原始参数，避免命令被 partial result 覆盖。
 
 验收：
 
@@ -292,7 +293,7 @@ flowchart TB
 - `/verify` 只读取固定 manifest 并展示一个候选、来源与费用提示；`/verify confirm` 必须紧随预览，才新增一次 Agent 回合。
 - package script 按 check/test/lint/build 选择，并支持 Python、Cargo、Go、Maven、Gradle 固定入口；未知项目不猜命令。
 - 对已批准的常见安全检查支持当前进程精确授权，继续拒绝通配符放行。
-- TUI 工具结果保持 240 字符摘要；模型侧复用 Pi Bash 的行数/字节上限与 `pi-bash` 临时完整输出，不复制日志截断器。
+- TUI 工具结果默认展示两行 tail，可通过 `/tool` 展开到 16 行；模型侧复用 Pi Bash 的行数/字节上限与 `pi-bash` 临时完整输出，不复制日志截断器。
 - 详细设计见 `docs/verification-loop.md`。
 
 验收结果：
@@ -313,7 +314,7 @@ flowchart TB
 - 复用 Pi `ProjectTrustStore`/trust 组件；项目资源信任继续不等于工具批准。
 - 设置文件损坏时显示错误并回退安全默认值，不静默覆盖。
 
-### P1-B：Bash 与工具结果体验
+### P1-B：Bash 与工具结果体验（已完成，2026-07-16）
 
 目标：让长命令可观察、可取消、可回看。
 
@@ -323,6 +324,17 @@ flowchart TB
 - 长输出分为 tail 摘要与可展开详情；模型只接收 Pi 已裁剪的结果。
 - 明确区分命令超时、用户取消、非零退出和 Provider 中断。
 - 评估复用 Pi `BashExecutionComponent`，不重新实现 PTY 管理。
+
+实际交付：
+
+- 产品层 `ToolActivityCard` 直接消费 Pi `tool_execution_start/update/end`；Runtime、执行、取消和结果裁剪仍归 Pi。
+- start 参数独立保存，update 分别读取事件 args 与 partial result，避免流式 Bash 把 `$ command` 覆盖成结果对象。
+- 默认显示参数摘要、cwd、持续时间和两行 tail；`/tool [id-prefix]` 展开到八行参数、十六行结果并可再次折叠。
+- Bash 成功显示 `EXIT 0`，并分别识别 `Command exited with code N`、`Command timed out after...` 和 `Command aborted`。
+- 读取 Pi `BashToolDetails` 展示 `truncatedBy` 与 `fullOutputPath`；不复制 Pi 的 PTY、`OutputAccumulator` 或临时文件逻辑。
+- 所有参数与结果在渲染前继续走统一敏感值遮蔽；80×24 替身覆盖流式、长输出、截断、超时、取消和 ID 前缀交互。
+
+边界：展开的是有界 tail，不把完整日志载入 TUI；完整输出使用 Pi 提供的本机路径。详见 `docs/tool-result-cards.md`。
 
 ### P1-C：DeepSeek Prompt 与显式工作档位
 
@@ -407,6 +419,12 @@ flowchart TB
 成功标准：未验证修改会提供清晰的 diff/verify/undo 选择；只有用户预览后确认 verify 才增加请求；长错误反馈保持脱敏和有界。
 
 完成证据：固定 manifest 候选发现、双阶段确认、精确验证 prompt、Completion Evidence 回收和 Pi Bash 截断边界已落地；77/77 自动化通过。真实 DeepSeek Flash TTY Smoke 完成 write → 零请求预览 → 显式确认 → 精确 Bash 审批 → passed Evidence，临时工作区和隔离 Session 已清理。
+
+### Iteration 5：Bash 与工具结果卡（已完成）
+
+成功标准：流式事件不丢失命令；成功、非零退出、超时、取消和截断可辨识；长结果可按 ID 展开；不复制 Pi 执行逻辑。
+
+完成证据：`ToolActivityCard` 与 `/tool [id-prefix]` 已接入 Pi 三段工具事件，80×24 测试覆盖核心状态；78/78 自动化通过。
 
 ## 12. 每次迭代的完成门槛
 

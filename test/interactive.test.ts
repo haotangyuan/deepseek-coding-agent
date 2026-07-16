@@ -262,6 +262,7 @@ test("parses supported interactive commands without treating normal prompts as c
   assert.deepEqual(parseInteractiveCommand("/cache"), { name: "cache", argument: "" });
   assert.deepEqual(parseInteractiveCommand("/diff"), { name: "diff", argument: "" });
   assert.deepEqual(parseInteractiveCommand("/verify confirm"), { name: "verify", argument: "confirm" });
+  assert.deepEqual(parseInteractiveCommand("/tool bash-1"), { name: "tool", argument: "bash-1" });
   assert.deepEqual(parseInteractiveCommand("/undo confirm"), { name: "undo", argument: "confirm" });
   assert.deepEqual(parseInteractiveCommand("/mode plan"), { name: "mode", argument: "plan" });
   assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
@@ -360,7 +361,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
     isError: false,
   });
   await flush();
-  assert.match(plainTerminalOutput(terminal), /\[tool:read\] done read ok/);
+  assert.match(plainTerminalOutput(terminal), /READ · DONE.*README\.md.*read ok/s);
 
   session.emit({ type: "agent_settled" });
   await flush();
@@ -387,7 +388,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
     type: "tool_execution_end",
     toolCallId: "bash-1",
     toolName: "bash",
-    result: { content: [{ type: "text", text: "exit 1" }], details: undefined },
+    result: { content: [{ type: "text", text: "Command exited with code 1" }], details: undefined },
     isError: true,
   });
   session.emit({
@@ -421,7 +422,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   });
   session.emit({ type: "auto_retry_end", success: false, attempt: 3, finalError: "503 service overloaded" });
   await flush();
-  assert.match(plainTerminalOutput(terminal), /TOOL FAILED · bash.*exit 1.*Agent loop continues/s);
+  assert.match(plainTerminalOutput(terminal), /BASH · EXIT 1.*Command exited with code 1/s);
   assert.match(plainTerminalOutput(terminal), /PROVIDER ERROR · NETWORK.*network unavailable.*Check network/s);
   assert.match(plainTerminalOutput(terminal), /RETRY RECOVERED · ATTEMPT 1.*Agent loop continues/s);
   assert.match(plainTerminalOutput(terminal), /RETRY EXHAUSTED · ATTEMPT 3.*Session will return to idle/s);
@@ -494,6 +495,125 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   terminal.type("/clear");
   await flush();
   assert.equal(clears, 1);
+
+  terminal.type("/exit");
+  await running;
+});
+
+test("renders streaming Bash cards and expands results without losing the command", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    agentMode: "build",
+    checkpoints: new TurnCheckpointManager(process.cwd()),
+    sessionControls: createSessionControls(),
+    terminal,
+    clearContext: () => undefined,
+    getContextSnapshot: createSnapshot,
+    setProjectResourcesEnabled: async () => undefined,
+    setAgentMode: () => undefined,
+    getGitStatus: async () => ({ available: true, status: "" }),
+  });
+  const running = mode.run();
+  await flush();
+  terminal.output = "";
+
+  session.emit({
+    type: "tool_execution_start",
+    toolCallId: "bash-stream-123456",
+    toolName: "bash",
+    args: { command: "npm test", timeout: 10 },
+  });
+  session.emit({
+    type: "tool_execution_update",
+    toolCallId: "bash-stream-123456",
+    toolName: "bash",
+    args: { command: "npm test", timeout: 10 },
+    partialResult: { content: [{ type: "text", text: "line-01\nline-02\nline-03" }], details: undefined },
+  });
+  await flush();
+  const streamingOutput = plainTerminalOutput(terminal);
+  assert.match(streamingOutput, /BASH · RUNNING.*\$ npm test.*cwd=\. · duration=.*line-02.*line-03.*streaming/s);
+  assert.doesNotMatch(streamingOutput, /\{"content"/);
+
+  terminal.output = "";
+  const lines = Array.from({ length: 20 }, (_, index) => `line-${String(index + 1).padStart(2, "0")}`).join("\n");
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "bash-stream-123456",
+    toolName: "bash",
+    result: {
+      content: [{ type: "text", text: lines }],
+      details: {
+        truncation: {
+          content: lines,
+          truncated: true,
+          truncatedBy: "lines",
+          totalLines: 2001,
+          totalBytes: 50001,
+          outputLines: 20,
+          outputBytes: lines.length,
+          lastLinePartial: false,
+          firstLineExceedsLimit: false,
+          maxLines: 2000,
+          maxBytes: 51200,
+        },
+        fullOutputPath: "/tmp/pi-bash-test.log",
+      },
+    },
+    isError: false,
+  });
+  await flush();
+  const completedOutput = plainTerminalOutput(terminal);
+  assert.match(completedOutput, /BASH · EXIT 0.*line-19.*line-20.*18 earlier lines/s);
+  assert.match(completedOutput, /truncated=lines · full=\/tmp\/pi-bash-test\.log/);
+  assert.match(completedOutput, /\/tool bash-stream- to expand/);
+
+  terminal.output = "";
+  terminal.type("/tool");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /line-05.*\/tool bash-stream- to collapse/s);
+
+  terminal.output = "";
+  terminal.type("/tool bash-stream-");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /tool bash-stream- collapsed/);
+
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "bash-timeout",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "Command timed out after 10 seconds" }], details: undefined },
+    isError: true,
+  });
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "bash-cancelled",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "Command aborted" }], details: undefined },
+    isError: true,
+  });
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /BASH · TIMEOUT.*Command timed out after 10 seconds/s);
+  assert.match(plainTerminalOutput(terminal), /BASH · CANCELLED.*Command aborted/s);
+
+  terminal.output = "";
+  session.emit({
+    type: "tool_execution_start",
+    toolCallId: "bash-secret",
+    toolName: "bash",
+    args: { command: "DEEPSEEK_API_KEY=sk-should-not-render npm test" },
+  });
+  await flush();
+  assert.doesNotMatch(plainTerminalOutput(terminal), /sk-should-not-render/);
+  assert.match(plainTerminalOutput(terminal), /DEEPSEEK_API_KEY=\[REDACTED\]/);
 
   terminal.type("/exit");
   await running;
@@ -634,7 +754,7 @@ test("previews explicit verification without a request and starts exactly one co
   await flush();
   const failedOutput = plainTerminalOutput(terminal);
   assert.match(failedOutput, /checks=npm run check:failed.*latest validation failed: npm run check/s);
-  assert.match(failedOutput, /x{20,}…/);
+  assert.match(failedOutput, /BASH · FAILED.*x{20,}/s);
   assert.doesNotMatch(failedOutput, /x{500}/);
 
   terminal.type("/exit");

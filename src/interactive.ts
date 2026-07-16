@@ -1,6 +1,7 @@
 import {
   type AgentSession,
   type AgentSessionEvent,
+  type BashToolDetails,
   type CreateAgentSessionOptions,
   initTheme,
   type ModelRegistry,
@@ -92,7 +93,7 @@ export interface InteractiveModeOptions {
 
 export type InteractiveCommand =
   | { name: "help" | "status" | "cache" | "diff" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
-  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify"; argument: string }
+  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify" | "tool"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -167,13 +168,13 @@ function formatResourceItems(items: ContextResourceItem[], cwd: string, limit = 
   return visible.join("\n");
 }
 
-function toolResultSummary(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): string {
-  const content = event.result.content
+function toolResultText(result: { content?: Array<{ type: string; text?: string }> }): string {
+  const content = (result.content ?? [])
     .filter((item: { type: string }) => item.type === "text")
     .map((item: { text?: string }) => item.text ?? "")
-    .join(" ");
-  const safe = sanitizeError(content).replace(/\s+/g, " ").trim();
-  return safe.length <= 240 ? safe : `${safe.slice(0, 240)}...[truncated]`;
+    .join("\n");
+  const safe = sanitizeError(content).trim();
+  return safe.length <= 12000 ? safe : `${safe.slice(0, 12000)}\n...[display truncated]`;
 }
 
 export function parseInteractiveCommand(input: string): InteractiveCommand | undefined {
@@ -188,8 +189,8 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
       argument,
     };
   }
-  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork", "undo", "verify"].includes(name)) {
-    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify", argument };
+  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork", "undo", "verify", "tool"].includes(name)) {
+    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify" | "tool", argument };
   }
   return { name: "unknown", argument: name };
 }
@@ -292,6 +293,107 @@ class TurnDiffCard implements Component {
   }
 }
 
+type ToolCardStatus = "running" | "done" | "failed" | "timeout" | "cancelled";
+
+class ToolActivityCard implements Component {
+  readonly id: string;
+  private readonly name: string;
+  private readonly cwd: string;
+  private readonly startedAt = Date.now();
+  private args: Record<string, unknown>;
+  private endedAt: number | undefined;
+  private status: ToolCardStatus = "running";
+  private exitCode: number | undefined;
+  private output = "";
+  private details: BashToolDetails | undefined;
+  private expanded = false;
+
+  constructor(event: Extract<AgentSessionEvent, { type: "tool_execution_start" }>, cwd: string) {
+    this.id = event.toolCallId;
+    this.name = event.toolName;
+    this.args = event.args;
+    this.cwd = cwd;
+  }
+
+  update(event: Extract<AgentSessionEvent, { type: "tool_execution_update" }>): void {
+    this.args = event.args;
+    this.output = toolResultText(event.partialResult);
+    this.details = this.readBashDetails(event.partialResult.details);
+  }
+
+  finish(event: Extract<AgentSessionEvent, { type: "tool_execution_end" }>): void {
+    this.endedAt = Date.now();
+    this.output = toolResultText(event.result);
+    this.details = this.readBashDetails(event.result.details);
+    if (!event.isError) {
+      this.status = "done";
+      if (this.name === "bash") this.exitCode = 0;
+      return;
+    }
+    const exitMatch = this.output.match(/Command exited with code (\d+)/);
+    if (exitMatch) this.exitCode = Number(exitMatch[1]);
+    if (/Command timed out after/.test(this.output)) this.status = "timeout";
+    else if (/Command aborted/.test(this.output)) this.status = "cancelled";
+    else this.status = "failed";
+  }
+
+  toggleExpanded(): boolean {
+    this.expanded = !this.expanded;
+    return this.expanded;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const available = Math.max(1, width);
+    const bodyWidth = Math.max(1, available - 4);
+    const titleStatus = this.status === "done"
+      ? this.name === "bash" ? "EXIT 0" : "DONE"
+      : this.status === "failed"
+        ? this.exitCode === undefined ? "FAILED" : `EXIT ${this.exitCode}`
+        : this.status.toUpperCase();
+    const tone = this.status === "running" ? colors.warning : this.status === "done" ? colors.success : colors.error;
+    const call = this.name === "bash" && typeof this.args.command === "string"
+      ? `$ ${sanitizeError(this.args.command)}`
+      : safeJson(this.args);
+    const elapsedMs = Math.max(0, (this.endedAt ?? Date.now()) - this.startedAt);
+    const duration = elapsedMs < 1000 ? `${elapsedMs}ms` : `${(elapsedMs / 1000).toFixed(1)}s`;
+    const lines = [tone(truncateToWidth(`╭─ ${this.name.toUpperCase()} · ${titleStatus}`, available))];
+    const callLines = wrapTextWithAnsi(call, bodyWidth);
+    const visibleCall = callLines.slice(0, this.expanded ? 8 : 2);
+    lines.push(...visibleCall.map((line) => truncateToWidth(`│ ${line}`, available)));
+    if (callLines.length > visibleCall.length) {
+      lines.push(colors.dim(truncateToWidth(`│ … ${callLines.length - visibleCall.length} argument lines`, available)));
+    }
+    if (this.name === "bash") {
+      lines.push(colors.dim(truncateToWidth(`│ cwd=${displayPath(this.cwd, this.cwd)} · duration=${duration}`, available)));
+    }
+    const outputLines = this.output.split("\n").filter((line) => line.trim() !== "");
+    const visibleOutput = this.expanded ? outputLines.slice(-16) : outputLines.slice(-2);
+    for (const line of visibleOutput) lines.push(truncateToWidth(`│ ${line}`, available));
+    if (outputLines.length > visibleOutput.length) {
+      lines.push(colors.dim(truncateToWidth(`│ … ${outputLines.length - visibleOutput.length} earlier lines`, available)));
+    }
+    if (this.details?.truncation?.truncated) {
+      lines.push(colors.warning(truncateToWidth(
+        `│ truncated=${this.details.truncation.truncatedBy ?? "yes"} · full=${this.details.fullOutputPath ?? "unavailable"}`,
+        available,
+      )));
+    }
+    const shortId = this.id.slice(0, 12);
+    const footer = this.status === "running"
+      ? `streaming · id=${shortId}`
+      : `${this.expanded ? `/tool ${shortId} to collapse` : `/tool ${shortId} to expand`} · id=${shortId}`;
+    lines.push(tone(truncateToWidth(`╰─ ${footer}`, available)));
+    return lines;
+  }
+
+  private readBashDetails(value: unknown): BashToolDetails | undefined {
+    if (this.name !== "bash" || !value || typeof value !== "object") return undefined;
+    return value as BashToolDetails;
+  }
+}
+
 class InteractiveEditor extends Container {
   private _focused = false;
   private readonly editor: Editor;
@@ -342,7 +444,8 @@ export class InteractiveMode {
   private readonly status: StatusLine;
   private readonly editor: InteractiveEditor;
   private readonly editorContainer = new Container();
-  private readonly toolLines = new Map<string, Component>();
+  private readonly toolCards = new Map<string, ToolActivityCard>();
+  private latestToolId: string | undefined;
   private retryCard: NoticeCard | undefined;
   private assistantText = "";
   private assistantComponent: Markdown | undefined;
@@ -557,7 +660,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /cache /diff /verify [confirm] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /cache /diff /verify [confirm] /tool [id] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -571,6 +674,8 @@ export class InteractiveMode {
       this.showTurnDiff();
     } else if (command.name === "verify") {
       await this.handleVerify(command.argument);
+    } else if (command.name === "tool") {
+      this.handleToolCommand(command.argument);
     } else if (command.name === "undo") {
       await this.handleUndo(command.argument);
     } else if (command.name === "session") {
@@ -612,7 +717,8 @@ export class InteractiveMode {
       } else {
         this.options.clearContext();
         this.transcript.clear();
-        this.toolLines.clear();
+        this.toolCards.clear();
+        this.latestToolId = undefined;
         this.reasoningBlocks.length = 0;
         this.resetTurnComponents();
         this.addSystem("conversation context cleared; the next prompt starts a new root while persisted history remains available");
@@ -1023,42 +1129,27 @@ export class InteractiveMode {
       this.assistantText = "";
       this.currentReasoning = undefined;
     } else if (event.type === "tool_execution_start") {
-      const line = new Text(
-        `${colors.warning(`[tool:${event.toolName}]`)} running ${safeJson(event.args)}`,
-        1,
-        0,
-      );
-      this.toolLines.set(event.toolCallId, line);
-      this.transcript.addChild(line);
+      const card = new ToolActivityCard(event, this.options.cwd);
+      this.toolCards.set(event.toolCallId, card);
+      this.latestToolId = event.toolCallId;
+      this.transcript.addChild(card);
       this.updateStatus(`tool ${event.toolName}`);
     } else if (event.type === "tool_execution_update") {
-      const line = this.toolLines.get(event.toolCallId);
-      if (line instanceof Text) {
-        line.setText(`${colors.warning(`[tool:${event.toolName}]`)} running ${safeJson(event.partialResult)}`);
-      }
+      this.toolCards.get(event.toolCallId)?.update(event);
     } else if (event.type === "tool_execution_end") {
-      const summary = toolResultSummary(event);
-      const label = event.isError ? colors.error(`[tool:${event.toolName}] failed`) : colors.success(`[tool:${event.toolName}] done`);
-      if (event.isError) {
-        const card = new NoticeCard({
-          title: `TOOL FAILED · ${event.toolName}`,
-          detail: summary || "Tool returned an error without text output.",
-          action: "The result was returned to the agent; it can retry or choose another tool.",
-          footer: "Agent loop continues",
-          tone: colors.error,
-        });
-        const previous = this.toolLines.get(event.toolCallId);
-        const index = previous ? this.transcript.children.indexOf(previous) : -1;
-        if (index === -1) this.transcript.addChild(card);
-        else this.transcript.children[index] = card;
-        this.toolLines.set(event.toolCallId, card);
-      } else {
-        const line = this.toolLines.get(event.toolCallId);
-        const text = line instanceof Text ? line : new Text("", 1, 0);
-        if (!(line instanceof Text)) this.transcript.addChild(text);
-        text.setText(`${label}${summary ? ` ${summary}` : ""}`);
-        this.toolLines.set(event.toolCallId, text);
+      let card = this.toolCards.get(event.toolCallId);
+      if (!card) {
+        card = new ToolActivityCard({
+          type: "tool_execution_start",
+          toolCallId: event.toolCallId,
+          toolName: event.toolName,
+          args: {},
+        }, this.options.cwd);
+        this.toolCards.set(event.toolCallId, card);
+        this.transcript.addChild(card);
       }
+      card.finish(event);
+      this.latestToolId = event.toolCallId;
       if (!event.isError && (event.toolName === "write" || event.toolName === "edit" || event.toolName === "bash")) {
         this.mutatingToolSucceeded = true;
       }
@@ -1181,6 +1272,27 @@ export class InteractiveMode {
       ...diff.warnings,
     ].filter((warning) => warning !== undefined).join(" ");
     this.transcript.addChild(new TurnDiffCard(diff.files, diff.patch, warnings || undefined));
+  }
+
+  private handleToolCommand(argument: string): void {
+    const target = argument || this.latestToolId;
+    if (!target) {
+      this.addError("no tool result is available to expand");
+      return;
+    }
+    const matches = [...this.toolCards.entries()].filter(([id]) => id === target || id.startsWith(target));
+    if (matches.length === 0) {
+      this.addError(`tool call not found: ${target}`);
+      return;
+    }
+    if (matches.length > 1) {
+      this.addError(`tool call id is ambiguous: ${target}`);
+      return;
+    }
+    const [id, card] = matches[0]!;
+    const expanded = card.toggleExpanded();
+    this.latestToolId = id;
+    this.addSystem(`tool ${id.slice(0, 12)} ${expanded ? "expanded" : "collapsed"}`);
   }
 
   private async handleVerify(argument: string): Promise<void> {

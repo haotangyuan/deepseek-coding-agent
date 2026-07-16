@@ -65,6 +65,7 @@ test("completes product commands, resources, DeepSeek models, and tree entries",
     assert.ok(commands?.items.some((item) => item.value === "model"));
     assert.ok(commands?.items.some((item) => item.value === "diff"));
     assert.ok(commands?.items.some((item) => item.value === "verify"));
+    assert.ok(commands?.items.some((item) => item.value === "tool"));
     assert.ok(commands?.items.some((item) => item.value === "undo"));
     assert.ok(commands?.items.some((item) => item.value === "skill:review"));
     assert.ok(commands?.items.some((item) => item.value === "fix"));

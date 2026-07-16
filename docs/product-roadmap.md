@@ -342,7 +342,7 @@ Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、显式验证闭环、Cache Inspector、Plan/Build、敏感路径保护和进程内精确 Bash 授权已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/verification-loop.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md` 和 `docs/session-approvals.md`。
+当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、显式验证闭环、Cache Inspector、Plan/Build、敏感路径保护、进程内精确 Bash 授权和可展开工具结果卡已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/verification-loop.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md`、`docs/session-approvals.md` 和 `docs/tool-result-cards.md`。
 
 实验方向：
 
@@ -528,9 +528,11 @@ npm test
 | D-037 | TUI 补全复用 Pi Editor/CombinedAutocompleteProvider，并在产品层动态组装和安全过滤 | 已采纳 | 保持 Pi 差分渲染与键盘体验；只显示 DeepSeek 模型，文件候选限制在工作区并隐藏敏感路径 |
 | D-038 | Session/Tree 直接复用 Pi 选择器，Session 切换通过销毁并重建 AgentSession 完成 | 已采纳 | 选择器像 Pi 一样临时替换输入区；保留搜索、排序、过滤和树交互，避免旧 Runtime 直接替换 JSONL 造成内存状态漂移，跨工作区会话保持只读可见但拒绝切换 |
 | D-039 | 本轮 Undo 使用 write/edit pre/post-image，不直接执行 Git stash apply | 已采纳 | 保留任务开始前已有脏内容；恢复前验证磁盘仍等于 post-image，冲突时整次拒绝。Bash 副作用明确不在保证范围 |
+| D-040 | 工具卡消费 Pi 事件与 Bash details，不复刻执行器 | 已采纳 | 产品层只负责有界 tail、状态语义和展开交互；PTY、取消、裁剪与完整输出文件仍由 Pi 管理 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成 Bash 与工具结果卡。TUI 保留 start 参数并用 update/end 原地刷新，展示 cwd、持续时间、退出/超时/取消、Pi 截断方式与完整输出路径；`/tool [id-prefix]` 展开有界 tail。78/78 自动化通过。
 - **2026-07-16：** 完成本轮 Diff 与安全文件 Undo。Pi Extension 在 `agent_start/tool_call/agent_settled` 记录 write/edit pre/post-image；`/diff` 展示聚合 unified patch，`/undo confirm` 经全文件冲突检查后恢复已有文件或删除新文件。每个 Session 的最新 checkpoint 以 `0600` 保存在产品私有目录，支持 resume，成功恢复后删除；Bash 副作用明确不覆盖。72/72 自动化通过。
 - **2026-07-16：** 完成 Pi Session/Tree 选择器。`/sessions` 接入 Pi 搜索、排序、范围、路径和删除确认界面；同工作区选择后销毁旧 Session 并从 JSONL 重建，跨工作区选择明确拒绝；`/tree` 接入 Pi 原生搜索、过滤、折叠与节点导航，文本 `list` 模式保留。63/63 自动化通过。
 - **2026-07-16：** 完成 TUI 输入补全。`/` 动态展示本项目命令、Skill 和 Prompt Template；模型、thinking、mode、resources、tree/fork 参数可补全；`@` 和 Tab 文件候选限制在工作区并过滤敏感路径。80×24 渲染路径和纯函数测试纳入 62/62 自动化验证。

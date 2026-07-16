@@ -83,6 +83,7 @@ npm start
 /cache
 /diff
 /verify [confirm]
+/tool [tool-call-id]
 /undo [confirm]
 /session
 /sessions [list]
@@ -105,6 +106,8 @@ npm start
 ```
 
 Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steering 排队；Ctrl+C 取消当前运行，空闲时连续两次 Ctrl+C 退出。reasoning 默认只显示长度，通过 `/reasoning` 展开或重新折叠。
+
+工具调用使用宽度感知卡片原地更新：默认保留命令、cwd、持续时间、退出状态和最后两行输出；`/tool` 展开或折叠最近一次工具结果，`/tool <id-prefix>` 可定位指定卡片。Bash 的非零退出、超时和取消分别显示，Pi 已截断的结果会给出截断方式和本机完整输出路径；展示内容继续经过敏感值遮蔽。详细设计见 [docs/tool-result-cards.md](docs/tool-result-cards.md)。
 
 `/diff` 展示最近一个包含 Pi write/edit 的 Agent 轮次，而不是整个 Git 工作区的混合差异。`/undo` 先显示恢复范围，只有 `/undo confirm` 才写入磁盘；如果文件在 Agent 完成后又被用户或其他进程修改，整次撤销会被拒绝。Bash 副作用不在自动撤销范围内。详细边界见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)。
 
@@ -232,7 +235,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。本轮 Diff/Undo 见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。工具结果卡见 [docs/tool-result-cards.md](docs/tool-result-cards.md)，本轮 Diff/Undo 见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 
