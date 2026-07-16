@@ -16,6 +16,7 @@ import {
 import {
   activeToolsForAgentMode,
   activeToolsForMode,
+  type ApprovalDecision,
   createToolPolicy,
   createToolPolicyExtension,
   type ApprovalRequest,
@@ -32,7 +33,7 @@ async function withWorkspace(run: (workspace: string) => Promise<void>): Promise
   }
 }
 
-const rejectApproval = async (): Promise<boolean> => false;
+const rejectApproval = async (): Promise<ApprovalDecision> => "deny";
 
 test("maps approval modes to the tools exposed to the model", () => {
   assert.deepEqual(activeToolsForMode("ask"), ["read", "ls", "grep", "write", "edit", "bash"]);
@@ -56,7 +57,7 @@ test("plan mode blocks mutating tools and switching to build restores approval",
       agentMode: "plan",
       approve: async () => {
         approvals += 1;
-        return true;
+        return "allow-once";
       },
     });
 
@@ -112,7 +113,7 @@ test("blocks sensitive files and directories while allowing public templates", a
       mode: "ask",
       approve: async () => {
         approvals += 1;
-        return true;
+        return "allow-once";
       },
     });
 
@@ -143,7 +144,7 @@ test("blocks obvious sensitive path references in bash before approval", async (
       mode: "ask",
       approve: async () => {
         asked = true;
-        return true;
+        return "allow-once";
       },
     });
 
@@ -199,7 +200,7 @@ test("ask mode shows write and edit previews before allowing execution", async (
       mode: "ask",
       approve: async (request) => {
         requests.push(request);
-        return true;
+        return "allow-once";
       },
     });
 
@@ -231,7 +232,7 @@ test("ask mode returns a blocking reason when the user rejects", async () => {
 
 test("an approved policy decision can execute the real Pi write tool", async () => {
   await withWorkspace(async (workspace) => {
-    const policy = createToolPolicy({ cwd: workspace, mode: "ask", approve: async () => true });
+    const policy = createToolPolicy({ cwd: workspace, mode: "ask", approve: async () => "allow-once" });
     const input = { path: "approved.txt", content: "approved\n" };
 
     assert.equal((await policy.evaluate("write", input)).allowed, true);
@@ -249,7 +250,7 @@ test("hard-blocks destructive bash commands before asking", async () => {
       mode: "ask",
       approve: async () => {
         asked = true;
-        return true;
+        return "allow-once";
       },
     });
 
@@ -260,6 +261,29 @@ test("hard-blocks destructive bash commands before asking", async () => {
     assert.equal(clean.allowed, false);
     assert.equal(remoteScript.allowed, false);
     assert.equal(asked, false);
+  });
+});
+
+test("session approval reuses only the exact safe bash command", async () => {
+  await withWorkspace(async (workspace) => {
+    const requests: ApprovalRequest[] = [];
+    const policy = createToolPolicy({
+      cwd: workspace,
+      mode: "ask",
+      approve: async (request) => {
+        requests.push(request);
+        return requests.length === 1 ? "allow-session" : "deny";
+      },
+    });
+
+    assert.equal((await policy.evaluate("bash", { command: "npm test" })).allowed, true);
+    assert.equal((await policy.evaluate("bash", { command: "npm test" })).allowed, true);
+    assert.equal(requests.length, 1);
+
+    const variant = await policy.evaluate("bash", { command: "npm test -- --watch=false" });
+    assert.equal(variant.allowed, false);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0]?.sessionApprovalKey, "npm test");
   });
 });
 

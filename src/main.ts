@@ -44,6 +44,7 @@ import {
 import {
   activeToolsForAgentMode,
   type AgentMode,
+  type ApprovalDecision,
   type ApprovalMode,
   type ApprovalRequest,
   createToolPolicy,
@@ -111,7 +112,7 @@ export interface CliDependencies {
 export interface CliIo {
   stdout(text: string): void;
   stderr(text: string): void;
-  approve?(request: ApprovalRequest): Promise<boolean>;
+  approve?(request: ApprovalRequest): Promise<ApprovalDecision>;
 }
 
 export interface CliRunOptions {
@@ -174,12 +175,12 @@ function productionDependencies(): CliDependencies {
     modelRegistry,
     createSession: createProductionSession,
     runInteractive: async ({ model, restoreSavedModel, thinkingLevel, approvalMode, agentMode, sessionSelection }) => {
-      let approvalHandler: ((request: ApprovalRequest) => Promise<boolean>) | undefined;
+      let approvalHandler: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
       const toolPolicy = createToolPolicy({
         cwd,
         mode: approvalMode,
         agentMode,
-        approve: (request) => approvalHandler?.(request) ?? Promise.resolve(false),
+        approve: (request) => approvalHandler?.(request) ?? Promise.resolve("deny"),
       });
       const resourceFilter = createProjectResourceFilter(cwd, agentDir);
       const created = await createProductionSession({
@@ -246,12 +247,16 @@ const processIo: CliIo = {
     process.stderr.write(`\n[approval] ${request.summary}\n${sanitizeError(request.preview)}\n`);
     if (!process.stdin.isTTY || !process.stderr.isTTY) {
       process.stderr.write("[approval:denied] interactive terminal required\n");
-      return false;
+      return "deny";
     }
     const readline = createInterface({ input: process.stdin, output: process.stderr });
     try {
-      const answer = await readline.question("Approve? [y/N] ");
-      return /^(?:y|yes)$/i.test(answer.trim());
+      const answer = await readline.question(
+        request.sessionApprovalKey ? "Approve? [y] once / [a] exact command for this process / [N] " : "Approve? [y/N] ",
+      );
+      if (/^(?:y|yes)$/i.test(answer.trim())) return "allow-once";
+      if (request.sessionApprovalKey && /^(?:a|always)$/i.test(answer.trim())) return "allow-session";
+      return "deny";
     } finally {
       readline.close();
     }
@@ -343,7 +348,7 @@ export async function runCli(
       cwd: dependencies.cwd,
       mode: parsed.approvalMode,
       agentMode: parsed.agentMode,
-      approve: io.approve ?? (async () => false),
+      approve: io.approve ?? (async () => "deny"),
     });
     const tools = activeToolsForAgentMode(parsed.approvalMode, parsed.agentMode);
     io.stderr(`[policy] agent-mode=${parsed.agentMode} approval=${parsed.approvalMode} workspace=${dependencies.cwd}\n`);

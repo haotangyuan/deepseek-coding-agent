@@ -122,7 +122,9 @@ transcript 只保存当前进程内的展示组件：
 
 ## 7. 审批与安全
 
-TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑定。write/edit/bash 的预览显示在 transcript，用户输入 `y`/`yes` 才允许，其余输入和 Ctrl+C 都拒绝。
+TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑定。write/edit/bash 的预览显示在 transcript：`y`/`yes` 允许一次；Bash 可用 `a`/`always` 在当前进程允许完全相同的命令；其余输入和 Ctrl+C 拒绝。write/edit 不提供 Session 授权。
+
+精确 Bash 授权由 ToolPolicy 内存 Set 持有，不写入 JSONL。命令字符串变化后重新审批；敏感路径和危险命令检查先于 Set 查询，不能被已有授权绕过。
 
 审批仍不是沙箱；批准 Bash 后拥有本地用户权限。路径、symlink、危险命令和第三方 Extension 边界保持 `docs/tool-safety.md` 中的定义。
 
@@ -135,6 +137,7 @@ TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑
 - tool start/end 卡片。
 - Provider 错误分类、自动重试 recovered/exhausted 卡片。
 - write 审批接受。
+- Bash 允许一次、当前进程精确授权和拒绝结果。
 - DeepSeek 模型与 thinking 切换。
 - Plan/Build 热切换后活动工具集合同步变化。
 - 活动请求 steering 和 Ctrl+C abort。

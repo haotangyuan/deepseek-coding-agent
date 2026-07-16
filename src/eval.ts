@@ -433,7 +433,7 @@ async function executeRepairTask(
       ], {
         stdout: (text) => stdout.push(text),
         stderr: (text) => stderr.push(text),
-        approve: async (request) => request.toolName === "write" || request.toolName === "edit",
+        approve: async (request) => request.toolName === "write" || request.toolName === "edit" ? "allow-once" : "deny",
       }, undefined, { signal: AbortSignal.timeout(REPAIR_ATTEMPT_TIMEOUT_MS) });
       const output = stdout.join("").trim();
       const stderrText = stderr.join("");

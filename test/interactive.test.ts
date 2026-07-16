@@ -424,7 +424,18 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
 
   const approval = mode.requestApproval({ toolName: "write", summary: "write demo.txt", preview: "+demo" });
   terminal.type("y");
-  assert.equal(await approval, true);
+  assert.equal(await approval, "allow-once");
+
+  const bashApproval = mode.requestApproval({
+    toolName: "bash",
+    summary: "bash in workspace",
+    preview: "npm test",
+    sessionApprovalKey: "npm test",
+  });
+  terminal.type("a");
+  assert.equal(await bashApproval, "allow-session");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /approval:allowed-session.*bash in workspace/s);
 
   terminal.type("/clear");
   await flush();

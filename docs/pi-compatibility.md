@@ -77,8 +77,9 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 
 | 验证 | 结果 |
 |---|---|
-| `npm run check` / `npm test` | 通过；52/52，不调用真实 API |
+| `npm run check` / `npm test` | 通过；55/55，不调用真实 API |
 | Plan/Build | CLI/TUI、活动工具重建、策略二次阻断和模式组合测试通过 |
+| 产品审批策略 | 敏感路径拒绝、allow-once/allow-session/deny 与精确 Bash 命令复用通过；不改变 Pi Tool API |
 | DeepSeek Flash Plan Smoke | ephemeral Session 中 ls Tool Call/Result 成功；无修改工具事件，工作区不变 |
 | Pi ls/grep | 临时目录真实执行通过；工作区路径与 symlink 边界通过 |
 | Pi find | 真实 Smoke 暴露本机缺少 fd，未进入默认工具集合 |

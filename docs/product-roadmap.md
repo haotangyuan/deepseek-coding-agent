@@ -332,7 +332,7 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、Cache Inspector、Plan/Build 和敏感路径保护已完成，优化实验进行中。** Plan 通过真实工具 allowlist 与策略二次阻断保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md` 和 `docs/sensitive-paths.md`。
+当前进展（2026-07-16）：**评测、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、Cache Inspector、Plan/Build、敏感路径保护和进程内精确 Bash 授权已完成，优化实验进行中。** Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md` 和 `docs/session-approvals.md`。
 
 实验方向：
 
@@ -503,9 +503,11 @@ npm test
 | D-030 | Cache Inspector 只消费 Pi 累计 usage 并使用快照差值 | 已采纳 | 不重复解析 Provider；0 token 显示 n/a，足量相邻轮次下降 20pp 才做事实型提示 |
 | D-031 | Plan/Build 与审批模式保持正交且不持久化 | 已采纳 | Plan 通过活动工具与策略钩子双重只读；Build 不绕过审批，resume 由当前启动参数决定 |
 | D-032 | 敏感路径默认拒绝，公开配置模板显式放行 | 已采纳 | 优先防止凭据进入模型上下文；保留 `.env.example/.sample/.template` 的正常开发流程，不夸大 Bash 字面量检测 |
+| D-033 | Session Bash 授权只匹配完整命令且不持久化 | 已采纳 | 降低重复审批摩擦，同时避免通配符误放行、跨会话陈旧授权和修改工具批量授权 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成进程内精确 Bash 授权。审批支持 allow-once / allow-session / deny；仅完全相同命令复用，危险/敏感检查不可绕过，55/55 自动化测试与真实 Flash 非 TTY 拒绝 Smoke 通过。
 - **2026-07-16：** 完成敏感路径规则。文件工具默认拒绝 `.env`、常见凭据目录/文件和 SSH 私钥名，公开模板放行；明显 Bash 路径引用在审批前阻断，54/54 自动化测试与真实 Flash 拒绝 Smoke 通过。
 - **2026-07-16：** 完成 Plan/Build。CLI `--mode` 与 TUI `/mode` 通过 Pi 动态工具 API 切换只读/可修改集合，Plan 对直接修改调用保留策略二次阻断；52/52 自动化测试与真实 Flash 只读 Smoke 通过。
 - **2026-07-16：** 完成 Cache Inspector。本轮/Session cache hit、miss、rate 与 `/cache` 已接入 CLI/TUI；49/49 测试与真实 Flash usage Smoke 通过，下降提示有 100 token 和 20pp 门槛，不触发额外请求或猜测原因。

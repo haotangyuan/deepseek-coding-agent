@@ -27,7 +27,13 @@ import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./comp
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
-import { AGENT_MODES, type AgentMode, type ApprovalMode, type ApprovalRequest } from "./tool-policy.ts";
+import {
+  AGENT_MODES,
+  type AgentMode,
+  type ApprovalDecision,
+  type ApprovalMode,
+  type ApprovalRequest,
+} from "./tool-policy.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type ThinkingLevel = AgentSession["thinkingLevel"];
@@ -287,7 +293,7 @@ export class InteractiveMode {
   private currentReasoning: { component: Text; text: string } | undefined;
   private showReasoning = false;
   private pendingApproval:
-    | { request: ApprovalRequest; resolve: (approved: boolean) => void; line: Text }
+    | { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void; line: Text }
     | undefined;
   private exitResolve: (() => void) | undefined;
   private exiting = false;
@@ -334,23 +340,26 @@ export class InteractiveMode {
       });
     } finally {
       this.unsubscribe?.();
-      this.pendingApproval?.resolve(false);
+      this.pendingApproval?.resolve("deny");
       this.pendingApproval = undefined;
       this.tui.stop();
     }
   }
 
-  requestApproval(request: ApprovalRequest): Promise<boolean> {
-    if (this.exiting || this.pendingApproval) return Promise.resolve(false);
+  requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
+    if (this.exiting || this.pendingApproval) return Promise.resolve("deny");
+    const choices = request.sessionApprovalKey
+      ? "Type y to allow once, a to allow this exact Bash command for this process; anything else rejects."
+      : "Type y and Enter to approve once; anything else rejects.";
     const line = new Text(
-      `${colors.warning("[approval]")} ${request.summary}\n${sanitizeError(request.preview)}\nType y and Enter to approve; anything else rejects.`,
+      `${colors.warning("[approval]")} ${request.summary}\n${sanitizeError(request.preview)}\n${choices}`,
       1,
       0,
     );
     this.transcript.addChild(line);
     this.updateStatus("waiting approval");
     this.tui.requestRender();
-    return new Promise<boolean>((resolve) => {
+    return new Promise<ApprovalDecision>((resolve) => {
       this.pendingApproval = { request, resolve, line };
     });
   }
@@ -415,11 +424,16 @@ export class InteractiveMode {
     if (this.pendingApproval) {
       const approval = this.pendingApproval;
       this.pendingApproval = undefined;
-      const approved = /^(?:y|yes)$/i.test(text);
+      const decision: ApprovalDecision = /^(?:y|yes)$/i.test(text)
+        ? "allow-once"
+        : approval.request.sessionApprovalKey && /^(?:a|always)$/i.test(text)
+          ? "allow-session"
+          : "deny";
+      const approved = decision !== "deny";
       approval.line.setText(
-        `${approved ? colors.success("[approval:approved]") : colors.error("[approval:rejected]")} ${approval.request.summary}`,
+        `${approved ? colors.success(decision === "allow-session" ? "[approval:allowed-session]" : "[approval:approved]") : colors.error("[approval:rejected]")} ${approval.request.summary}`,
       );
-      approval.resolve(approved);
+      approval.resolve(decision);
       this.updateStatus(this.session.isStreaming ? "running" : "idle");
       return;
     }
@@ -789,7 +803,7 @@ export class InteractiveMode {
       const approval = this.pendingApproval;
       this.pendingApproval = undefined;
       approval.line.setText(`${colors.error("[approval:rejected]")} ${approval.request.summary}`);
-      approval.resolve(false);
+      approval.resolve("deny");
       this.updateStatus("running");
       return;
     }

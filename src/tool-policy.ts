@@ -15,9 +15,11 @@ export interface ApprovalRequest {
   toolName: "write" | "edit" | "bash";
   summary: string;
   preview: string;
+  sessionApprovalKey?: string;
 }
 
-export type ApprovalPrompt = (request: ApprovalRequest) => Promise<boolean>;
+export type ApprovalDecision = "allow-once" | "allow-session" | "deny";
+export type ApprovalPrompt = (request: ApprovalRequest) => Promise<ApprovalDecision>;
 
 export interface ToolPolicyDecision {
   allowed: boolean;
@@ -214,6 +216,7 @@ function buildBashApproval(cwd: string, input: Record<string, unknown>): Approva
     toolName: "bash",
     summary: `bash in ${cwd}`,
     preview: truncatePreview(`${input.command}\n\nBash runs with local user permissions and is not sandboxed.`),
+    sessionApprovalKey: input.command,
   };
 }
 
@@ -239,6 +242,7 @@ export function createToolPolicy(options: {
   agentMode?: AgentMode;
   approve: ApprovalPrompt;
 }): ToolPolicy {
+  const approvedBashCommands = new Set<string>();
   const policy: ToolPolicy = {
     mode: options.mode,
     agentMode: options.agentMode ?? "build",
@@ -283,12 +287,18 @@ export function createToolPolicy(options: {
           if (sensitiveReason) return { allowed: false, reason: sensitiveReason };
           const blockedReason = getBlockedCommandReason(input.command);
           if (blockedReason) return { allowed: false, reason: blockedReason };
+          if (approvedBashCommands.has(input.command)) return { allowed: true };
           request = buildBashApproval(options.cwd, input);
         }
 
-        return (await options.approve(request))
-          ? { allowed: true }
-          : { allowed: false, reason: `User rejected ${toolName} tool execution` };
+        const decision = await options.approve(request);
+        if (decision === "deny") {
+          return { allowed: false, reason: `User rejected ${toolName} tool execution` };
+        }
+        if (decision === "allow-session" && request.sessionApprovalKey) {
+          approvedBashCommands.add(request.sessionApprovalKey);
+        }
+        return { allowed: true };
       } catch (error) {
         return {
           allowed: false,

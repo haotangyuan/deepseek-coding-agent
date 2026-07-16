@@ -26,7 +26,7 @@
 | Plan/Build | 已有显式 CLI/TUI 状态；Plan 只暴露 read/ls/grep，Build 恢复审批控制工具 | P1 已落地；保持非持久、空闲切换，不把 Prompt 当权限边界 |
 | Flash/Pro 自动路由 | 当前显式手动选择，避免付费升级惊喜 | 暂缓自动路由；先有分阶段任务数据，再考虑在清晰边界切换 |
 | Tool Call repair | Pi Schema 错误会回填模型；尚无确定性 JSON 修复层 | 继续采集失败样本；默认不偷偷猜参数 |
-| 权限规则与敏感文件 | 已有 workspace/symlink、三种审批模式、Plan/Build、敏感路径默认拒绝和危险 Bash 阻断 | 敏感路径 P1 已落地；通用命令模式授权与 OS sandbox 继续独立演进 |
+| 权限规则与敏感文件 | 已有 workspace/symlink、三种审批模式、Plan/Build、敏感路径拒绝、危险 Bash 阻断和进程内精确命令授权 | P1 已落地；通配符规则与 OS sandbox 不在当前授权中伪实现 |
 | 自动项目记忆 | 已有 AGENTS/Skills/Session/Compaction，没有自动写长期记忆 | 延后；自动记忆会引入陈旧上下文和前缀漂移 |
 | 多 Agent/Explore 子 Agent | 当前没有，路线图明确 deferred | 单 Agent 闭环和评测稳定前不做 |
 | 大型 competitor benchmark | 当前 6 个固定任务，缺 Claude Code/OpenCode 同模型矩阵 | M7；先扩充异质任务，再做同模型、同仓库、同预算对照 |
@@ -59,12 +59,18 @@
 - `.env.example/.sample/.template` 明确放行，避免破坏正常项目配置教学和生成。
 - Bash 对明显路径字面量在审批前拒绝；文档不宣称能覆盖变量拼接、脚本间接访问或任意程序行为。
 
+### 进程内精确 Bash 授权
+
+- `y` 允许一次；`a` 只记住完全相同的 Bash command 字符串。
+- 授权不写入 Session，重启后消失；命令变化立即重新审批。
+- write/edit 不支持批量放行；危险命令和敏感路径先于授权缓存检查。
+
 ## 4. 下一步顺序
 
-1. **命令模式授权：** 在当前逐次审批上增加可解释的 allow-once / deny 规则，不实现含糊的 Shell 自动放行。
-2. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
-3. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
-4. **Cache 实验：** 用固定前缀的冷/热重复任务验证自然命中波动，不把单次 Inspector 告警当成因果结论。
+1. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
+2. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
+3. **Cache 实验：** 用固定前缀的冷/热重复任务验证自然命中波动，不把单次 Inspector 告警当成因果结论。
+4. **诊断工具：** 从 TypeScript/Python 的显式只读 diagnostics 开始评估，不先搭通用 LSP 平台。
 
 apply_patch、LSP、自动路由和子 Agent 只有在上述闭环有数据后再进入实现，避免把项目做成功能堆叠。
 
