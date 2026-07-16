@@ -21,6 +21,7 @@ interface EvalTask {
   expected: string;
   requiredToolResult?: "success" | "error";
   maxAttempts?: 2;
+  feedbackRequired?: boolean;
 }
 
 interface EvalOptions {
@@ -76,6 +77,7 @@ export interface RepairVerification {
 }
 
 export interface FeedbackRecoveryVerification {
+  firstAttemptPassed: boolean;
   firstAttemptFailed: boolean;
   recoveredAfterFeedback: boolean;
   toolErrorsWithinLimit: boolean;
@@ -149,6 +151,7 @@ const TASKS: EvalTask[] = [
     expected: "FIXED",
     requiredToolResult: "success",
     maxAttempts: 2,
+    feedbackRequired: true,
   },
   {
     id: "repair-config",
@@ -157,6 +160,31 @@ const TASKS: EvalTask[] = [
     prompt: "Read src/config.mjs and test/config.test.mjs. Fix only src/config.mjs so it ignores blank and comment lines, trims keys and values, and preserves equals signs inside values. Do not run shell commands because the evaluator will run the tests. Reply with exactly FIXED after editing.",
     expected: "FIXED",
     requiredToolResult: "success",
+  },
+  {
+    id: "repair-cross-module",
+    kind: "repair",
+    approval: "ask",
+    prompt: "A bulk checkout reports the wrong total and leaves too much inventory. Explore the repository, locate the cooperating source modules, and fix the quantity handling while preserving the public checkout API. Do not modify tests or run shell commands because the evaluator will run the tests. Reply with exactly FIXED after editing.",
+    expected: "FIXED",
+    requiredToolResult: "success",
+  },
+  {
+    id: "repair-long-log",
+    kind: "repair",
+    approval: "ask",
+    prompt: "CI failed and saved its output in logs/ci.log. Inspect the log, locate the relevant source bug, and fix only the source file. Do not modify logs or tests and do not run shell commands because the evaluator will run the tests. Reply with exactly FIXED after editing.",
+    expected: "FIXED",
+    requiredToolResult: "success",
+  },
+  {
+    id: "repair-validation",
+    kind: "repair",
+    approval: "ask",
+    prompt: "A CSV import bug report says the final column is omitted. Read the source and fix that behavior without creating files or running shell commands. The evaluator will check compatibility and may return a bounded validation summary. Reply with exactly FIXED after editing.",
+    expected: "FIXED",
+    requiredToolResult: "success",
+    maxAttempts: 2,
   },
 ];
 
@@ -168,6 +196,20 @@ const CHECKOUT_SOURCE = `import { subtotal } from "./cart.mjs";\nimport { applyD
 const CHECKOUT_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { subtotal } from "../src/cart.mjs";\nimport { applyDiscount } from "../src/discount.mjs";\nimport { checkout } from "../src/index.mjs";\n\ntest("subtotal includes item quantities", () => {\n  assert.equal(subtotal([{ price: 12, quantity: 2 }, { price: 5, quantity: 3 }]), 39);\n});\n\ntest("discount percent is divided by one hundred", () => {\n  assert.equal(applyDiscount(200, 15), 170);\n});\n\ntest("checkout composes subtotal and discount", () => {\n  assert.equal(checkout([{ price: 50, quantity: 2 }], 20), 80);\n});\n`;
 const CONFIG_SOURCE = `export function parseConfig(text) {\n  return Object.fromEntries(text.split("\\n").map((line) => line.split("=")));\n}\n`;
 const CONFIG_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { parseConfig } from "../src/config.mjs";\n\ntest("parses repository-style configuration", () => {\n  assert.deepEqual(parseConfig(" # local config\\n API_URL = https://example.test?a=b \\n\\nTIMEOUT=30\\n"), {\n    API_URL: "https://example.test?a=b",\n    TIMEOUT: "30",\n  });\n});\n`;
+const INVENTORY_SOURCE = `export function reserve(stock, lines) {\n  const remaining = { ...stock };\n  for (const line of lines) {\n    if ((remaining[line.sku] ?? 0) < line.quantity) return { ok: false, sku: line.sku };\n    remaining[line.sku] -= 1;\n  }\n  return { ok: true, remaining };\n}\n`;
+const ORDER_TOTAL_SOURCE = `export function orderTotal(prices, lines) {\n  return lines.reduce((total, line) => total + prices[line.sku], 0);\n}\n`;
+const BULK_CHECKOUT_SOURCE = `import { reserve } from "./inventory.mjs";\nimport { orderTotal } from "./order-total.mjs";\n\nexport function checkout(stock, prices, lines) {\n  const reservation = reserve(stock, lines);\n  if (!reservation.ok) return reservation;\n  return { ok: true, total: orderTotal(prices, lines), remaining: reservation.remaining };\n}\n`;
+const BULK_CHECKOUT_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { checkout } from "../src/checkout.mjs";\n\ntest("bulk checkout applies quantity across module boundaries", () => {\n  assert.deepEqual(checkout({ pen: 8, book: 3 }, { pen: 2, book: 10 }, [\n    { sku: "pen", quantity: 3 },\n    { sku: "book", quantity: 2 },\n  ]), { ok: true, total: 26, remaining: { pen: 5, book: 1 } });\n});\n`;
+const DURATION_SOURCE = `export function parseDuration(value) {\n  const match = /^(\\d+)(ms|s|m)$/.exec(value);\n  if (!match) throw new Error("invalid duration");\n  const amount = Number(match[1]);\n  if (match[2] === "ms") return amount;\n  if (match[2] === "s") return amount * 1000;\n  return amount * 1000;\n}\n`;
+const DURATION_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { parseDuration } from "../src/time/parse-duration.mjs";\n\ntest("parses scheduler timeout units", () => {\n  assert.equal(parseDuration("250ms"), 250);\n  assert.equal(parseDuration("3s"), 3000);\n  assert.equal(parseDuration("2m"), 120000);\n});\n`;
+const CI_LOG = [
+  ...Array.from({ length: 240 }, (_, index) => `2026-07-16T10:00:${String(index % 60).padStart(2, "0")}Z INFO shard=${index % 8} suite=passing-${index}`),
+  "2026-07-16T10:05:00Z ERROR suite=test/job-timeout.test.mjs assertion failed",
+  "AssertionError: parseDuration(\"2m\") expected 120000 but received 2000",
+  "    at src/time/parse-duration.mjs:7:10",
+  ...Array.from({ length: 240 }, (_, index) => `2026-07-16T10:06:${String(index % 60).padStart(2, "0")}Z INFO cleanup worker=${index % 6}`),
+].join("\n");
+const CSV_SOURCE = `export function parseCsv(text) {\n  return text.trimEnd().split(/\\r?\\n/).map((row) => row.split(",").slice(0, -1));\n}\n`;
 const REPAIR_FIXTURES: Record<string, RepairFixture> = {
   "repair-js": {
     files: {
@@ -203,6 +245,32 @@ const REPAIR_FIXTURES: Record<string, RepairFixture> = {
     },
     expectedChangedFiles: ["src/config.mjs"],
     protectedFiles: ["test/config.test.mjs"],
+  },
+  "repair-cross-module": {
+    files: {
+      "src/inventory.mjs": INVENTORY_SOURCE,
+      "src/order-total.mjs": ORDER_TOTAL_SOURCE,
+      "src/checkout.mjs": BULK_CHECKOUT_SOURCE,
+      "test/checkout.test.mjs": BULK_CHECKOUT_TEST,
+    },
+    expectedChangedFiles: ["src/inventory.mjs", "src/order-total.mjs"],
+    protectedFiles: ["src/checkout.mjs", "test/checkout.test.mjs"],
+  },
+  "repair-long-log": {
+    files: {
+      "src/time/parse-duration.mjs": DURATION_SOURCE,
+      "test/job-timeout.test.mjs": DURATION_TEST,
+      "logs/ci.log": CI_LOG,
+    },
+    expectedChangedFiles: ["src/time/parse-duration.mjs"],
+    protectedFiles: ["test/job-timeout.test.mjs", "logs/ci.log"],
+  },
+  "repair-validation": {
+    files: {
+      "src/csv.mjs": CSV_SOURCE,
+    },
+    expectedChangedFiles: ["src/csv.mjs"],
+    protectedFiles: [],
   },
 };
 const execFileAsync = promisify(execFile);
@@ -373,11 +441,22 @@ export function buildRepairFeedback(testOutput: string): string {
 
 export function verifyFeedbackRecovery(testResults: boolean[], toolErrors: number): FeedbackRecoveryVerification {
   return {
+    firstAttemptPassed: testResults[0] === true,
     firstAttemptFailed: testResults[0] === false,
     recoveredAfterFeedback: testResults.length === 2 && testResults[1] === true,
     toolErrorsWithinLimit: toolErrors <= 5,
     toolErrors,
   };
+}
+
+export function feedbackRecoveryPassed(
+  checks: FeedbackRecoveryVerification,
+  feedbackRequired: boolean,
+): boolean {
+  if (!checks.toolErrorsWithinLimit) return false;
+  return feedbackRequired
+    ? checks.firstAttemptFailed && checks.recoveredAfterFeedback
+    : checks.firstAttemptPassed || checks.recoveredAfterFeedback;
 }
 
 export function shouldRetryRepair(
@@ -396,13 +475,18 @@ async function runRepairTests(task: EvalTask, fixture: string): Promise<TestRun>
   try {
     let args = ["--test"];
     let cwd = fixture;
-    if (task.id === "repair-feedback") {
+    if (task.id === "repair-feedback" || task.id === "repair-validation") {
       evaluatorDir = await mkdtemp(join(tmpdir(), "deepseek-code-eval-tests-"));
       const testPath = join(evaluatorDir, "regression.test.mjs");
-      const cartUrl = pathToFileURL(join(fixture, "src/cart.mjs")).href;
-      const discountUrl = pathToFileURL(join(fixture, "src/discount.mjs")).href;
-      const indexUrl = pathToFileURL(join(fixture, "src/index.mjs")).href;
-      await writeFile(testPath, `import { subtotal } from ${JSON.stringify(cartUrl)};\nimport { applyDiscount } from ${JSON.stringify(discountUrl)};\nimport { checkout } from ${JSON.stringify(indexUrl)};\n\nconst failures = [];\nfunction check(label, actual, expected) {\n  if (!Object.is(actual, expected)) failures.push(\`FAIL \${label}: expected \${expected}, received \${actual}\`);\n}\ncheck("src/cart.mjs subtotal includes quantities", subtotal([{ price: 12, quantity: 2 }, { price: 5, quantity: 3 }]), 39);\ncheck("src/discount.mjs applyDiscount uses a percentage", applyDiscount(200, 15), 170);\ncheck("src/index.mjs checkout combines both calculations", checkout([{ price: 50, quantity: 2 }], 20), 80);\nif (failures.length > 0) {\n  console.error(failures.join("\\n"));\n  process.exitCode = 1;\n}\n`);
+      if (task.id === "repair-feedback") {
+        const cartUrl = pathToFileURL(join(fixture, "src/cart.mjs")).href;
+        const discountUrl = pathToFileURL(join(fixture, "src/discount.mjs")).href;
+        const indexUrl = pathToFileURL(join(fixture, "src/index.mjs")).href;
+        await writeFile(testPath, `import { subtotal } from ${JSON.stringify(cartUrl)};\nimport { applyDiscount } from ${JSON.stringify(discountUrl)};\nimport { checkout } from ${JSON.stringify(indexUrl)};\n\nconst failures = [];\nfunction check(label, actual, expected) {\n  if (!Object.is(actual, expected)) failures.push(\`FAIL \${label}: expected \${expected}, received \${actual}\`);\n}\ncheck("src/cart.mjs subtotal includes quantities", subtotal([{ price: 12, quantity: 2 }, { price: 5, quantity: 3 }]), 39);\ncheck("src/discount.mjs applyDiscount uses a percentage", applyDiscount(200, 15), 170);\ncheck("src/index.mjs checkout combines both calculations", checkout([{ price: 50, quantity: 2 }], 20), 80);\nif (failures.length > 0) {\n  console.error(failures.join("\\n"));\n  process.exitCode = 1;\n}\n`);
+      } else {
+        const csvUrl = pathToFileURL(join(fixture, "src/csv.mjs")).href;
+        await writeFile(testPath, `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { parseCsv } from ${JSON.stringify(csvUrl)};\n\ntest("keeps the final column", () => {\n  assert.deepEqual(parseCsv("name,role\\nAda,admin\\n"), [["name", "role"], ["Ada", "admin"]]);\n});\n\ntest("preserves quoted commas and empty trailing fields", () => {\n  assert.deepEqual(parseCsv("name,note,tag\\r\\nAda,\\\"hello,world\\\",\\r\\n"), [["name", "note", "tag"], ["Ada", "hello,world", ""]]);\n});\n`);
+      }
       args = [testPath];
       cwd = evaluatorDir;
     }
@@ -513,11 +597,7 @@ async function executeRepairTask(
         attempts.reduce((total, attempt) => total + (attempt.metrics?.toolErrors ?? 0), 0),
       )
       : undefined;
-    const feedbackPassed = feedbackChecks === undefined || (
-      feedbackChecks.firstAttemptFailed &&
-      feedbackChecks.recoveredAfterFeedback &&
-      feedbackChecks.toolErrorsWithinLimit
-    );
+    const feedbackPassed = feedbackChecks === undefined || feedbackRecoveryPassed(feedbackChecks, task.feedbackRequired ?? false);
     const diagnostic = finalAttempt.error ? classifyDeepSeekError(finalAttempt.error) : undefined;
     return {
       type: "eval_result",

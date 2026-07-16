@@ -1,7 +1,7 @@
 # DeepSeek Coding Agent 产品与技术路线图
 
 > 文档性质：持续维护的产品、架构与开发决策基线
-> 最近更新：2026-07-16（长工具结果分页与搜索）
+> 最近更新：2026-07-16（高区分度评测任务）
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
 > M3 实现基线提交：`4d57b48`
@@ -343,7 +343,7 @@ Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、受信任项目验证配置、Cache Inspector、Plan/Build、敏感路径保护、进程内精确 Bash 授权和长工具结果分页/搜索已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/verification-loop.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md`、`docs/session-approvals.md` 和 `docs/tool-result-cards.md`。
+当前进展（2026-07-16）：**评测 Schema v3、10 个协议/repair 任务、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、受信任项目验证配置、Cache Inspector、Plan/Build、敏感路径保护、精确 Bash 授权和长工具结果分页/搜索已完成，优化实验进行中。** 新增跨模块探索、长 CI 日志定位和可选反馈验证任务；评测只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制。详见 `docs/deepseek-evaluation.md` 及对应产品设计文档。
 
 实验方向：
 
@@ -469,7 +469,8 @@ npm test
 | Done | 长工具结果分页与搜索 | 已完成 12 行分页、10 条搜索结果、Pi 临时日志受限流式读取和脱敏 |
 | Done | 本地设置与项目信任 | 已完成私有偏好、CLI 覆盖、Pi trust store、fail-closed 资源加载和 TUI 决策卡 |
 | Done | Prompt Profile 首轮量化 | 18 个 repair 样本无质量收益，默认保持 pi；后续先扩充高区分度任务 |
-| P1 | DeepSeek 量化优化 | 扩充跨模块与验证失败任务，再评估 Prompt/thinking/模型档位 |
+| Done | 高区分度评测任务 | 已加入跨模块、长日志和可选反馈验证；下一步建立重复真实基线 |
+| P1 | DeepSeek 量化优化 | 固定新任务重复样本，再评估 Prompt/thinking/模型档位 |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
@@ -540,9 +541,11 @@ npm test
 | D-044 | 首轮重复 A/B 后默认继续使用 Pi Profile | 已采纳 | 两档 9/9 通过，DeepSeek Profile 总体耗时高 4.0%、成本高 6.3%，没有质量收益；保留显式实验入口但不默认注入 |
 | D-045 | 项目验证命令作为受信任资源，不作为普通偏好 | 已采纳 | 命令可执行且会改变本机状态；信任前只发现存在，启用后严格解析，执行仍经过预览、Agent 回合和 Bash 审批 |
 | D-046 | 长输出查看只消费事件结果与 Pi 临时文件 | 已采纳 | 不复制 OutputAccumulator 或执行器；分页/搜索零请求、内存有界且可独立取消，临时文件限定来源、普通文件、大小并使用 O_NOFOLLOW |
+| D-047 | 反馈型评测区分“首轮完成”与“反馈恢复” | 已采纳 | `repair-feedback` 保留强制恢复链路；一般验证任务允许首轮完整通过，避免用评分机制奖励先失败 |
 
 ### 更新日志
 
+- **2026-07-16：** 扩充高区分度评测。新增未显式给文件名的跨模块数量契约修复、约 480 行 CI 日志定位和 CSV 隐藏边界验证；任务总数增至 10。反馈判定新增首轮通过事实，`repair-feedback` 仍要求失败后恢复，而 `repair-validation` 允许首轮完成或一次反馈恢复。98/98 自动化、dry-run 和三个 Flash/high 单次真实基线均通过，总成本 `$0.0045356472`，无 Provider 错误。
 - **2026-07-16：** 完成长工具结果分页与搜索。`/tool [id] page <n>` 每页 12 行，`/tool [id] find <text>` 最多展示 10 条大小写不敏感命中；Pi 截断 Bash 结果通过 `O_NOFOLLOW` 流式读取受限 `pi-bash` 临时文件，并支持 Ctrl+C 独立取消，不复制执行/截断逻辑。80×24、100×30、越界、symlink、取消和敏感值回归纳入 98 项自动化。
 - **2026-07-16：** 完成受信任项目验证配置。`.deepseek-code/validation.json` 支持最多 20 个命名命令；未知项目先展示来源且不读取，只有 Trust 与 Resources 同时启用才解析。`/verify` 支持列表、命名预览和显式确认，撤销信任/资源后旧预览失效；无效 JSON、单行约束和 symlink 逃逸 fail-closed。自动化增至 93 项。
 - **2026-07-16：** 完成 Prompt Profile 重复 A/B。Flash/high 下三个 repair 任务每档各 3 次，两档均 9/9 通过且无工具/Provider 错误；DeepSeek Profile 总体平均耗时高 4.0%、成本高 6.3%，未观察到质量收益。默认保持 `pi`，实验入口保留，下一步先扩充高区分度任务。详见 `docs/prompt-profile-ab.md`。

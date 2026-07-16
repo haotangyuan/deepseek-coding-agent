@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSessionEvent, SessionStats } from "@earendil-works/pi-coding-agent";
-import { buildRepairFeedback, parseEvalArgs, shouldRetryRepair, summarizeEval, verifyFeedbackRecovery, verifyRepairFiles } from "../src/eval.ts";
+import { buildRepairFeedback, evalUsage, feedbackRecoveryPassed, parseEvalArgs, shouldRetryRepair, summarizeEval, verifyFeedbackRecovery, verifyRepairFiles } from "../src/eval.ts";
 import { summarizeEvalTasks, type EvalSampleResult } from "../src/eval-report.ts";
 import { EvaluationMetricsCollector } from "../src/evaluation.ts";
 
@@ -32,6 +32,12 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
   assert.equal(parseEvalArgs(["--task", "repair-multi-file", "--max-cost-usd=0.5"]).maxCostUsd, 0.5);
   assert.equal(parseEvalArgs(["--task", "repair-feedback"]).task, "repair-feedback");
   assert.equal(parseEvalArgs(["--task", "repair-config"]).task, "repair-config");
+  assert.equal(parseEvalArgs(["--task", "repair-cross-module"]).task, "repair-cross-module");
+  assert.equal(parseEvalArgs(["--task", "repair-long-log"]).task, "repair-long-log");
+  assert.equal(parseEvalArgs(["--task", "repair-validation"]).task, "repair-validation");
+  assert.match(evalUsage(), /repair-cross-module/);
+  assert.match(evalUsage(), /repair-long-log/);
+  assert.match(evalUsage(), /repair-validation/);
   assert.throws(() => parseEvalArgs(["--model", "openai/gpt-5"]), /only allows the deepseek provider/i);
   assert.throws(() => parseEvalArgs(["--model", "deepseek/"]), /Model ID cannot be empty/);
   assert.throws(() => parseEvalArgs(["--thinking", "medium"]), /Invalid thinking level/);
@@ -51,14 +57,27 @@ test("repair feedback is bounded, redacted, and only retried after a test failur
   assert.equal(shouldRetryRepair(0, true, 1, 2, 0.001, 0.005), false);
   assert.equal(shouldRetryRepair(0, false, 2, 2, 0.001, 0.005), false);
   assert.equal(shouldRetryRepair(0, false, 1, 2, 0.005, 0.005), false);
-  assert.deepEqual(verifyFeedbackRecovery([false, true], 2), {
+  const recovered = verifyFeedbackRecovery([false, true], 2);
+  assert.deepEqual(recovered, {
+    firstAttemptPassed: false,
     firstAttemptFailed: true,
     recoveredAfterFeedback: true,
     toolErrorsWithinLimit: true,
     toolErrors: 2,
   });
+  const firstPass = verifyFeedbackRecovery([true], 0);
+  assert.deepEqual(firstPass, {
+    firstAttemptPassed: true,
+    firstAttemptFailed: false,
+    recoveredAfterFeedback: false,
+    toolErrorsWithinLimit: true,
+    toolErrors: 0,
+  });
+  assert.equal(feedbackRecoveryPassed(recovered, true), true);
+  assert.equal(feedbackRecoveryPassed(firstPass, true), false);
+  assert.equal(feedbackRecoveryPassed(firstPass, false), true);
+  assert.equal(feedbackRecoveryPassed(verifyFeedbackRecovery([false, true], 6), false), false);
   assert.equal(verifyFeedbackRecovery([false, true], 6).toolErrorsWithinLimit, false);
-  assert.equal(verifyFeedbackRecovery([true], 0).recoveredAfterFeedback, false);
 });
 
 test("repair verification requires every expected edit and preserves protected files", () => {

@@ -16,8 +16,8 @@
 - `src/evaluation.ts` 只订阅 `AgentSessionEvent` 并读取 `getSessionStats()`，不介入消息或工具执行。
 - `src/eval.ts` 通过产品 CLI 跑真实链路，不直接拼 DeepSeek HTTP 请求。
 - `--ephemeral` 使用 Pi `SessionManager.inMemory()`，评测不会污染日常 JSONL 会话。
-- 四个 repair 任务只在系统临时目录自动批准 write/edit；Bash 始终拒绝，测试由评测器执行，结束后删除 fixture。
-- `repair-feedback` 的隐藏测试在 Agent 工作区外；失败只回填 evaluator 生成的最小摘要，不暴露测试源码、路径或堆栈。
+- 7 个 repair 任务只在系统临时目录自动批准 write/edit；Bash 始终拒绝，测试由评测器执行，结束后删除 fixture。
+- `repair-feedback` 和 `repair-validation` 的隐藏测试在 Agent 工作区外；失败只回填 evaluator 生成的最小摘要，不暴露测试源码、路径或堆栈。
 - 每次 repair Agent 尝试最多 60 秒；超时通过 `AbortSignal` 调用 Pi `AgentSession.abort()`，不只是在外层放弃等待。
 - 自动化只用事件替身和内存对象；真实 API 必须显式增加 `--live`。
 
@@ -97,8 +97,11 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | `repair-multi-file` | 临时目录内 write/edit | Agent/工具成功、两个目标源码都改变、原文件无缺失、入口和测试不变、无额外文件、测试通过 | 多文件定位、完整执行和防止投机修改 |
 | `repair-feedback` | 临时目录内 write/edit；隐藏测试在目录外 | 第一轮测试失败、第二轮使用摘要恢复、两个目标源码改变、测试通过、工具错误不超过 5 次 | act → verify → repair 和反馈质量 |
 | `repair-config` | 临时目录内 write/edit | 配置解析器忽略空行/注释、清理空白、保留值中的等号；测试不变且通过 | 字符串解析、边界条件和非算术修复 |
+| `repair-cross-module` | 临时目录内 write/edit | 通过探索定位库存与计价模块；两个目标源码改变，公共 checkout 入口和测试不变 | 未显式给出文件名的跨模块发现与契约修复 |
+| `repair-long-log` | 临时目录内 write/edit | 从约 480 行 CI 日志定位 duration 失败；只修改对应源码，日志和测试不变 | 长工件检索、有效错误提炼与定点修复 |
+| `repair-validation` | 临时目录内 write/edit；隐藏测试在目录外 | CSV 最后一列、引号逗号、CRLF 和空尾列全部通过；允许首轮直接通过或一次摘要反馈后恢复 | 不惩罚完整首修的验证驱动恢复 |
 
-前三项是低成本协议基线，最终输出保持全文严格匹配。repair 链路可能在工具轮次间产生可见的解释文本，因此模型文本只作为短诊断摘要，不参与通过判定；正确性由 Agent/工具状态、文件完整性和外部测试共同决定。`repair-feedback` 使用两个独立的 Pi 内存 Session，但共享同一临时工作区：第二个 Agent 根据测试摘要重新读取当前源码，不伪装成同一模型会话。修改类任务继续只在隔离目录执行。
+前三项是低成本协议基线，最终输出保持全文严格匹配；7 个 repair 任务用于质量判断，模型文本只作为短诊断摘要，正确性由 Agent/工具状态、文件完整性和外部测试共同决定。`repair-feedback` 刻意要求经历失败后恢复，用来验证反馈链路；`repair-validation` 允许首轮完整通过，也允许一次摘要反馈后恢复，避免把更好的首次修复误判为失败。反馈轮使用新的 Pi 内存 Session 但共享临时工作区，不伪装成同一模型会话。
 
 ## 5. 指标定义
 
@@ -116,6 +119,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | `eventSequence` | 去除连续重复后的事件类别，最多 64 项 | 便于检查主链路，不保存完整 reasoning 或工具内容 |
 | `attemptCount/feedbackRounds` | 一个逻辑样本实际使用的 Agent 尝试和反馈轮数 | 用于区分任务样本与 Provider 请求 |
 | `feedbackChecks` | 首次失败、反馈后恢复、工具错误上限 | 防止“最终碰巧通过但过程严重抖动”被记为可靠恢复 |
+| `feedbackChecks.firstAttemptPassed` | 隐藏验证是否在首轮已通过 | 区分一次完成与反馈恢复，不强迫模型先失败 |
 
 ## 6. 错误诊断与重试边界
 
@@ -150,8 +154,11 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | Flash / high / repair-multi-file | 通过，6 次工具成功，两个目标文件修改且外部测试通过 | 1045 ms | 7579 ms | 88.71% | $0.0005783456 |
 | Flash / high / repair-feedback | 通过；首轮失败、第二轮恢复；6 次工具成功、0 错误 | 1369 / 850 ms | 16330 ms | 92.15% / 96.59% | $0.0008691984 |
 | Flash / high / repair-config | 通过，4 次工具成功、0 错误，外部测试通过 | 972 ms | 18133 ms | 71.15% | $0.0018497976 |
+| Flash / high / repair-cross-module | 通过，探索后修改两个目标模块，11 次工具成功、0 错误 | 1007 ms | 14544 ms | 92.81% | $0.0009710792 |
+| Flash / high / repair-long-log | 通过，从约 480 行日志定位源文件，3 次工具成功、0 错误 | 1219 ms | 8520 ms | 78.78% | $0.0019864488 |
+| Flash / high / repair-validation | 通过；首轮修复遗漏引号边界，摘要反馈后恢复；15 次工具调用、3 错误 | 947 / 764 ms | 30230 ms | 94.07% / 97.01% | $0.0015781192 |
 
-事实：既有任务、反馈恢复任务和新增的非算术配置解析任务均完成预期链路。`repair-feedback` 的首次预验证曾超过 2 分钟且没有结果，因此增加了真实 Session abort；随后直接回填 TAP 输出虽然功能通过，却造成 36 次工具调用和 31 次工具错误。改成不含路径/堆栈的 evaluator 摘要后，最终样本用两轮、6 次成功工具调用和 0 次工具错误完成，且总成本下降到 $0.0008691984。推断限制：这些仍是单个或少量样本，不能据此宣称优化具有统计显著性；它们只证明新闭环可工作，并提供了值得重复测量的反馈格式假设。
+事实：既有任务和三个新增任务均完成预期链路。跨模块任务在未给文件清单时修改了两个正确模块；长日志任务没有修改日志或测试；validation 首轮只移除截断逻辑，隐藏的引号逗号边界失败后，第二轮依据最小摘要恢复。三个新增样本总成本 `$0.0045356472`，没有 Provider 错误；validation 的第二轮产生 3 次工具错误，虽然低于当前上限，但应作为后续工具质量观察点。推断限制：这些仍是单次样本，只证明 fixture 和评分闭环可工作，不能据此宣称 Prompt 或模型策略更优。
 
 ### 7.1 2026-07-16 repair-feedback 三次重复
 
@@ -187,7 +194,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 - Prompt Profile 首轮重复 A/B 已完成：18 个 repair 样本均通过，`deepseek` 没有质量收益且总体效率略差，默认继续使用 `pi`。详见 `prompt-profile-ab.md`。
 - 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
-- 扩充本项目自己的异质任务和重复样本，用同一 suite 比较 prompt、工具、thinking 与模型策略迭代前后的变化。
+- 对新增 `repair-cross-module`、`repair-long-log`、`repair-validation` 先做 Flash/high 单次受控基线，再以重复样本比较 prompt、工具、thinking 与模型策略；fixture 已进入 suite，但未完成的真实重复数据不写成优化结论。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。
 - 只有在普通 Schema 失败样本足够明确后，再在 playground 研究 strict tool mode。

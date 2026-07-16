@@ -122,7 +122,7 @@ flowchart TB
 | Completion Evidence 与验证 | 记录修改、diff、验证和错误；受信任 `.deepseek-code/validation.json` 可声明命名命令，`/verify <name>` 只预览，`/verify confirm` 才新增一次 Agent 回合 | `src/completion-evidence.ts`；`src/validation-suggestions.ts`；`src/interactive.ts` `handleVerify()` | 项目覆盖与 manifest fallback 可用；不自动 Gate |
 | Cache Inspector | 本轮和 Session hit/miss/rate，足量样本下降告警 | `src/cache-inspector.ts:42`；`test/cache-inspector.test.ts` | 观测可用 |
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
-| 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
+| 评测 | 3 个协议基线 + 7 个 repair 任务；覆盖跨模块发现、长日志、隐藏验证反馈、成本边界和按任务聚合 | `src/eval.ts` 的 `TASKS`、`executeRepairTask()`；`src/eval-report.ts`；`test/evaluation.test.ts` | fixture 覆盖已扩展；新增任务待真实重复基线 |
 
 当前自动化共 98 项，覆盖纯函数、替身 Session、临时目录工具、80×24/100×30 TUI、流式/截断/失败工具卡、结果分页/搜索/取消、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、命名验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
@@ -140,7 +140,7 @@ flowchart TB
 ### 5.2 仍然会造成日常摩擦
 
 1. **验证选择仍需人工判断**：项目可声明多个命令，但产品不会根据本轮修改文件自动猜测最相关的一条。
-2. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+2. **高区分度评测仍缺重复数据**：跨模块、长日志和复杂验证 fixture 已进入 suite，但还需要固定模型/档位的重复真实样本才能支持产品优化结论。
 3. **语义化代码导航有限**：仓库理解仍主要依赖 read/ls/grep，尚未加入编译器 diagnostics 或 LSP。
 
 ## 6. 外部产品带来的设计启发
@@ -469,6 +469,12 @@ Flash/high、Flash/max、Pro/max 工作档位继续暂缓；下一次 Prompt 迭
 成功标准：用户无需离开 TUI 即可定位长输出；不复制 Pi 执行/截断逻辑；临时文件读取有明确来源、大小与 symlink 边界；任何查看操作都不增加模型请求。
 
 完成证据：`/tool [id] page <n>`、`/tool [id] find <text>`、12 行页、10 条搜索结果、独立取消、`O_NOFOLLOW` Pi 临时日志读取与统一脱敏已落地；98/98 自动化覆盖 80×24、100×30、越界和敏感输出。
+
+### Iteration 9：高区分度评测任务（已完成）
+
+成功标准：协议链路与真实修复质量分开观察；新增任务能够覆盖未显式给文件名的跨模块探索、长 CI 日志定位和隐藏验证反馈；首轮完整修复不能被强迫失败。
+
+完成证据：`repair-cross-module`、`repair-long-log`、`repair-validation` 已纳入同一 Schema v3 suite；评测仍只批准临时目录 write/edit、拒绝 Bash 并由外部测试评分。反馈结果新增 `firstAttemptPassed`，原 `repair-feedback` 继续要求真实恢复，新验证任务允许首轮通过或一次反馈恢复。98/98 自动化、10 样本/12 请求 dry-run 和三个 Flash/high 单次真实基线均通过；新增样本总成本 `$0.0045356472`，未保存完整 reasoning、工具输出或 Session。
 
 ## 12. 每次迭代的完成门槛
 
