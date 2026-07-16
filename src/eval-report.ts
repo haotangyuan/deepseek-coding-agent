@@ -10,6 +10,7 @@ export interface EvalSampleResult {
   run: number;
   model: string;
   thinking: string;
+  promptProfile: string;
   passed: boolean;
   durationMs?: number;
   costUsd?: number;

@@ -9,6 +9,11 @@ import {
 } from "./product-settings.ts";
 import { AGENT_MODES, APPROVAL_MODES, type AgentMode, type ApprovalMode } from "./tool-policy.ts";
 import { describeDeepSeekError } from "./deepseek-errors.ts";
+import {
+  DEFAULT_PROMPT_PROFILE,
+  PROMPT_PROFILES,
+  type PromptProfile,
+} from "./prompt-profile.ts";
 
 export const DEFAULT_MODEL_ID = DEFAULT_PRODUCT_MODEL;
 export const DEEPSEEK_PROVIDER = "deepseek";
@@ -22,6 +27,7 @@ export interface CliOptions {
   modelExplicit: boolean;
   thinkingLevel: DeepSeekThinkingLevel;
   thinkingExplicit: boolean;
+  promptProfile: PromptProfile;
   approvalMode: ApprovalMode;
   agentMode: AgentMode;
   session: SessionSelection;
@@ -59,6 +65,7 @@ export function parseCliArgs(
   let modelExplicit = false;
   let thinkingLevel: DeepSeekThinkingLevel = defaults.thinking;
   let thinkingExplicit = false;
+  let promptProfile = DEFAULT_PROMPT_PROFILE;
   let approvalMode: ApprovalMode = defaults.approval;
   let agentMode: AgentMode = defaults.mode;
   let session: SessionSelection = { type: "new" };
@@ -95,6 +102,19 @@ export function parseCliArgs(
       }
       thinkingLevel = value as DeepSeekThinkingLevel;
       thinkingExplicit = true;
+    } else if (arg === "--prompt-profile") {
+      const parsed = readOptionValue(args, index, "--prompt-profile");
+      if (!PROMPT_PROFILES.includes(parsed.value as PromptProfile)) {
+        throw new Error(`Invalid prompt profile: ${parsed.value}`);
+      }
+      promptProfile = parsed.value as PromptProfile;
+      index = parsed.nextIndex;
+    } else if (arg.startsWith("--prompt-profile=")) {
+      const value = arg.slice("--prompt-profile=".length);
+      if (!PROMPT_PROFILES.includes(value as PromptProfile)) {
+        throw new Error(`Invalid prompt profile: ${value || "(empty)"}`);
+      }
+      promptProfile = value as PromptProfile;
     } else if (arg === "--approval") {
       const parsed = readOptionValue(args, index, "--approval");
       if (!APPROVAL_MODES.includes(parsed.value as ApprovalMode)) {
@@ -164,6 +184,7 @@ export function parseCliArgs(
     modelExplicit,
     thinkingLevel,
     thinkingExplicit,
+    promptProfile,
     approvalMode,
     agentMode,
     session,
@@ -288,12 +309,13 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
 
 export function usage(): string {
   return [
-    "Usage: deepseek-code [--doctor] [--model MODEL] [--thinking LEVEL] [--mode MODE] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
+    "Usage: deepseek-code [--doctor] [--model MODEL] [--thinking LEVEL] [--prompt-profile pi|deepseek] [--mode MODE] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
     "",
     `Default model: ${DEFAULT_MODEL_ID}`,
     `Allowed provider: ${DEEPSEEK_PROVIDER}`,
     "Doctor: --doctor runs offline readiness checks without creating a session",
     "Thinking levels: off, high (default), max",
+    `Prompt profiles: ${PROMPT_PROFILES.join(", ")} (default: ${DEFAULT_PROMPT_PROFILE})`,
     "Approval modes: ask (default), auto-read, deny",
     "Agent modes: plan (read-only), build (default)",
     "Session options: --continue/-c resumes latest; --resume/-r selects history; --ephemeral disables persistence",

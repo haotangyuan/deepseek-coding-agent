@@ -22,6 +22,7 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
     live: false,
     model: "deepseek-v4-flash",
     thinking: "high",
+    promptProfile: "pi",
     task: "all",
     runs: 1,
     maxCostUsd: 0.02,
@@ -104,7 +105,7 @@ test("evaluation summary reports pass, cost, and budget stop", () => {
   const plan = [{ task: "exact", taskKind: "protocol", plannedSamples: 1 }] as const;
   const passed: EvalSampleResult = {
     type: "eval_result", schemaVersion: 3, suite: "deepseek-code-v1", agent: "deepseek-code", task: "exact", taskKind: "protocol",
-    run: 1, model: "deepseek-v4-flash", thinking: "high", passed: true, costUsd: 0.005,
+    run: 1, model: "deepseek-v4-flash", thinking: "high", promptProfile: "pi", passed: true, costUsd: 0.005,
     durationMs: 100, toolCalls: 0, toolErrors: 0, providerErrors: 0, attemptCount: 1,
   };
   assert.deepEqual(summarizeEval(plan, [passed], 0.02), {
@@ -112,6 +113,7 @@ test("evaluation summary reports pass, cost, and budget stop", () => {
     schemaVersion: 3,
     suite: "deepseek-code-v1",
     agent: "deepseek-code",
+    promptProfile: "pi",
     passed: true,
     plannedSamples: 1,
     completedSamples: 1,
@@ -142,7 +144,7 @@ test("evaluation summary reports pass, cost, and budget stop", () => {
 test("task summaries aggregate logical samples instead of only final attempts", () => {
   const base: EvalSampleResult = {
     type: "eval_result", schemaVersion: 3, suite: "deepseek-code-v1", agent: "deepseek-code", task: "repair-feedback", taskKind: "repair",
-    run: 1, model: "deepseek-v4-flash", thinking: "high", passed: true,
+    run: 1, model: "deepseek-v4-flash", thinking: "high", promptProfile: "pi", passed: true,
     durationMs: 300, costUsd: 0.003, toolCalls: 5, toolErrors: 1, providerErrors: 0, attemptCount: 2,
   };
   const summaries = summarizeEvalTasks(

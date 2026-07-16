@@ -33,6 +33,7 @@ import { createInteractiveAutocompleteProvider } from "./autocomplete.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import type { ProductPreferences } from "./product-settings.ts";
 import type { ProductProjectTrustSnapshot } from "./project-trust.ts";
+import { DEFAULT_PROMPT_PROFILE, type PromptProfile } from "./prompt-profile.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import {
@@ -84,6 +85,7 @@ export interface InteractiveModeOptions {
   cwd: string;
   approvalMode: ApprovalMode;
   agentMode: AgentMode;
+  promptProfile?: PromptProfile;
   initialShowReasoning?: boolean;
   settingsPath?: string;
   settingsWarning?: string;
@@ -475,6 +477,7 @@ export class InteractiveMode {
   private readonly completionEvidence: CompletionEvidenceCollector;
   private readonly cacheInspector = new CacheInspector();
   private agentMode: AgentMode;
+  private readonly promptProfile: PromptProfile;
   private unsubscribe: (() => void) | undefined;
   private nextSessionSelection: SessionSelection | undefined;
   private pendingVerification: ValidationSuggestion | undefined;
@@ -486,6 +489,7 @@ export class InteractiveMode {
     this.options = options;
     this.session = options.session;
     this.agentMode = options.agentMode;
+    this.promptProfile = options.promptProfile ?? DEFAULT_PROMPT_PROFILE;
     this.showReasoning = options.initialShowReasoning ?? false;
     this.projectTrustStatus = options.projectTrust?.snapshot.status ?? "trusted";
     this.completionEvidence = new CompletionEvidenceCollector(options.cwd);
@@ -518,6 +522,7 @@ export class InteractiveMode {
     this.addSystem(`workspace ${this.options.cwd}`);
     this.addSystem(`approval ${this.options.approvalMode}`);
     this.addSystem(`agent mode ${this.agentMode}`);
+    this.addSystem(`prompt profile ${this.promptProfile}`);
     if (this.options.settingsWarning) this.addSystem(`settings warning: ${this.options.settingsWarning}; safe defaults are active`);
     const session = this.options.sessionControls.snapshot();
     this.addSystem(`session ${session.id} · ${session.persisted ? "persisted" : "memory"}`);
@@ -594,14 +599,14 @@ export class InteractiveMode {
     const cwd = relative(process.cwd(), this.options.cwd) || ".";
     const session = this.options.sessionControls.snapshot();
     this.status.setText(
-      `${state} | ${DEEPSEEK_PROVIDER}/${model} | session=${session.id.slice(0, 8)} | tokens=${stats.tokens.total} | cwd=${cwd}`,
+      `${state} | ${DEEPSEEK_PROVIDER}/${model} | prompt=${this.promptProfile} | session=${session.id.slice(0, 8)} | tokens=${stats.tokens.total} | cwd=${cwd}`,
     );
     const context = this.options.getContextSnapshot();
     const modelLabel = model.replace(/^deepseek-v4-/, "V4 ").toUpperCase();
     this.header.setText(`${colors.ocean("◆")} ${colors.ice(colors.bold("DEEPSEEK CODE"))}`);
     this.subheader.setText(
       colors.dim(
-        `${modelLabel} · ${this.agentMode.toUpperCase()} · THINKING ${this.session.thinkingLevel.toUpperCase()} · ${this.options.approvalMode.toUpperCase()} · PROJECT CONTEXT ${context.projectResourcesEnabled ? "ON" : "OFF"}`,
+        `${modelLabel} · ${this.agentMode.toUpperCase()} · PROMPT ${this.promptProfile.toUpperCase()} · THINKING ${this.session.thinkingLevel.toUpperCase()} · ${this.options.approvalMode.toUpperCase()} · PROJECT CONTEXT ${context.projectResourcesEnabled ? "ON" : "OFF"}`,
       ),
     );
     this.tui.requestRender();
@@ -690,7 +695,7 @@ export class InteractiveMode {
       const stats = this.session.getSessionStats();
       const context = this.options.getContextSnapshot();
       this.addSystem(
-        `model=${this.session.model?.id ?? "none"} mode=${this.agentMode} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} session=${stats.sessionId} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
+        `model=${this.session.model?.id ?? "none"} mode=${this.agentMode} prompt=${this.promptProfile} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} session=${stats.sessionId} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
       );
     } else if (command.name === "settings") {
       this.handleSettingsCommand(command.argument);

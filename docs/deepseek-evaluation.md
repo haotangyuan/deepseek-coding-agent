@@ -56,6 +56,7 @@
 ```bash
 npm run build
 npm run eval -- --task all --model deepseek-v4-flash --thinking high
+npm run eval -- --task all --model deepseek-v4-flash --thinking high --prompt-profile deepseek
 ```
 
 显式运行真实评测：
@@ -71,9 +72,11 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking max --run
 npm run eval -- --live --task all --model deepseek-v4-pro --thinking high --runs 3
 ```
 
+Prompt A/B 必须保持模型、thinking、任务、runs 和成本上限一致，只改变 `--prompt-profile pi|deepseek`。当前默认 `pi`；单次 smoke 只证明 Profile 链路可用，不用于切换默认值。
+
 `--runs` 限制为 1–5。Pro 必须显式选择，不存在自动升级。建议先 dry-run 检查 `sampleCount`、`maxProviderRequests` 和 `maxCostUsd`，再决定是否付费执行。默认上限为 0.02 美元；累计已知成本达到上限后不再开始下一次请求，最终超过上限则汇总失败。由于真实成本只能在一次请求完成并返回 usage 后计算，这是一条请求间的观测边界，不是 Provider 侧预授权的硬预算。
 
-输出协议固定为 NDJSON。Schema v3 的 dry-run 只有一条 `eval_plan`，其中 `sampleCount` 是逻辑样本数，`maxProviderRequests` 是包含最多一次反馈修复后的调用上限；真实执行每个样本一条 `eval_result`，最后一条 `eval_summary`。每条结果都带固定 fixture 版本 `suite=deepseek-code-v1`、`agent`、`taskKind`，并在顶层累计整个逻辑样本的 `durationMs`、`costUsd`、`toolCalls`、`toolErrors`、`providerErrors` 和 `attemptCount`；因此两轮 repair 不会只统计最后一轮。汇总的 `tasks` 按任务报告通过率、平均/P50/P95 延迟、平均/总成本、工具错误率与 Provider 请求数。repair 结果仍保留每次尝试的短输出和测试状态，但不记录完整 reasoning、工具结果、隐藏测试或凭据。
+输出协议固定为 NDJSON。Schema v3 的 dry-run 只有一条 `eval_plan`，其中 `sampleCount` 是逻辑样本数，`maxProviderRequests` 是包含最多一次反馈修复后的调用上限，`promptProfile` 固定本次提示策略；真实执行每个样本一条 `eval_result`，最后一条 `eval_summary`。每条结果都带固定 fixture 版本 `suite=deepseek-code-v1`、`agent`、`taskKind` 和 `promptProfile`，并在顶层累计整个逻辑样本的 `durationMs`、`costUsd`、`toolCalls`、`toolErrors`、`providerErrors` 和 `attemptCount`；因此两轮 repair 不会只统计最后一轮。汇总的 `tasks` 按任务报告通过率、平均/P50/P95 延迟、平均/总成本、工具错误率与 Provider 请求数。repair 结果仍保留每次尝试的短输出和测试状态，但不记录完整 reasoning、工具结果、隐藏测试或凭据。
 
 一次性 CLI 也可单独输出指标：
 

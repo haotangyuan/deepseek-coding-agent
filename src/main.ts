@@ -39,6 +39,7 @@ import { EvaluationMetricsCollector } from "./evaluation.ts";
 import { collectDoctorReport, type DoctorReport, renderDoctorReport } from "./doctor.ts";
 import { InteractiveMode } from "./interactive.ts";
 import { ProductProjectTrust } from "./project-trust.ts";
+import { applyPromptProfile, type PromptProfile } from "./prompt-profile.ts";
 import {
   DEFAULT_PRODUCT_PREFERENCES,
   type ProductPreferences,
@@ -80,6 +81,7 @@ interface SessionFactoryOptions {
   model: SelectedModel;
   restoreSavedModel: boolean;
   thinkingLevel?: DeepSeekThinkingLevel;
+  promptProfile: PromptProfile;
   toolPolicy: ToolPolicy;
   tools: string[];
   sessionSelection: SessionSelection;
@@ -121,6 +123,7 @@ export interface CliDependencies {
     restoreSavedModel: boolean;
     thinkingLevel?: DeepSeekThinkingLevel;
     thinkingExplicit: boolean;
+    promptProfile: PromptProfile;
     approvalMode: ApprovalMode;
     agentMode: AgentMode;
     showReasoning: boolean;
@@ -185,6 +188,7 @@ function productionDependencies(): CliDependencies {
       skillsOverride: resourceFilter.skillsOverride,
       promptsOverride: resourceFilter.promptsOverride,
       agentsFilesOverride: resourceFilter.agentsFilesOverride,
+      appendSystemPromptOverride: (base) => applyPromptProfile(options.promptProfile, base),
     });
     await resourceLoader.reload();
     const projectTrustRequired = projectTrust.hasPiTrustResources()
@@ -239,7 +243,7 @@ function productionDependencies(): CliDependencies {
       interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
     }),
     createSession: createProductionSession,
-    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, thinkingExplicit, approvalMode, agentMode, showReasoning, sessionSelection }) => {
+    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, thinkingExplicit, promptProfile, approvalMode, agentMode, showReasoning, sessionSelection }) => {
       let activeSelection = sessionSelection;
       let activeThinkingLevel = thinkingLevel;
       while (true) {
@@ -256,6 +260,7 @@ function productionDependencies(): CliDependencies {
           model,
           restoreSavedModel,
           thinkingLevel: activeThinkingLevel,
+          promptProfile,
           toolPolicy,
           tools: activeToolsForAgentMode(approvalMode, agentMode),
           sessionSelection: activeSelection,
@@ -266,6 +271,7 @@ function productionDependencies(): CliDependencies {
           cwd,
           approvalMode,
           agentMode,
+          promptProfile,
           initialShowReasoning: showReasoning,
           settingsPath: productSettings.path,
           settingsWarning: productSettings.getLoadError()?.message,
@@ -415,6 +421,7 @@ export async function runCli(
         restoreSavedModel: !parsed.modelExplicit,
         thinkingLevel,
         thinkingExplicit: parsed.thinkingExplicit,
+        promptProfile: parsed.promptProfile,
         approvalMode: parsed.approvalMode,
         agentMode: parsed.agentMode,
         showReasoning: dependencies.preferences?.showReasoning ?? false,
@@ -466,12 +473,14 @@ export async function runCli(
     });
     const tools = activeToolsForAgentMode(parsed.approvalMode, parsed.agentMode);
     io.stderr(`[policy] agent-mode=${parsed.agentMode} approval=${parsed.approvalMode} workspace=${dependencies.cwd}\n`);
+    io.stderr(`[prompt-profile] ${parsed.promptProfile}\n`);
     const created = await dependencies.createSession({
       authStorage: dependencies.authStorage,
       modelRegistry: dependencies.modelRegistry,
       model,
       restoreSavedModel: !parsed.modelExplicit && restoreSession,
       thinkingLevel,
+      promptProfile: parsed.promptProfile,
       toolPolicy,
       tools,
       sessionSelection: parsed.session,

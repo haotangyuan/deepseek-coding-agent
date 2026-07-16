@@ -34,6 +34,7 @@ test("parses the default model and task text", () => {
     modelExplicit: false,
     thinkingLevel: "high",
     thinkingExplicit: false,
+    promptProfile: "pi",
     approvalMode: "ask",
     agentMode: "build",
     session: { type: "new" },
@@ -98,12 +99,14 @@ test("parses explicit plan and build modes", () => {
 });
 
 test("parses reproducible thinking, metrics and ephemeral options", () => {
-  const parsed = parseCliArgs(["--thinking=max", "--metrics", "--ephemeral", "task"]);
+  const parsed = parseCliArgs(["--thinking=max", "--prompt-profile=deepseek", "--metrics", "--ephemeral", "task"]);
   assert.equal(parsed.thinkingLevel, "max");
   assert.equal(parsed.thinkingExplicit, true);
   assert.equal(parsed.metrics, true);
+  assert.equal(parsed.promptProfile, "deepseek");
   assert.deepEqual(parsed.session, { type: "memory" });
   assert.throws(() => parseCliArgs(["--thinking", "medium", "task"]), /Invalid thinking level/);
+  assert.throws(() => parseCliArgs(["--prompt-profile", "custom", "task"]), /Invalid prompt profile/);
   assert.throws(() => parseCliArgs(["--ephemeral", "--continue", "task"]), /Only one session selection/);
 });
 
@@ -191,6 +194,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   let selectedSession = "";
   let restoreSavedModel = true;
   let selectedThinking: string | undefined;
+  let selectedPromptProfile = "";
   let selectedAgentMode = "";
   let prompt = "";
   let prompted = false;
@@ -206,6 +210,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
       selectedSession = options.sessionSelection.type;
       restoreSavedModel = options.restoreSavedModel;
       selectedThinking = options.thinkingLevel;
+      selectedPromptProfile = options.promptProfile;
       selectedAgentMode = options.toolPolicy.agentMode;
       return {
         projectTrust: {
@@ -259,7 +264,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   };
   const stdout: string[] = [];
   const stderr: string[] = [];
-  const code = await runCli(["--model", "deepseek-v4-flash", "--thinking", "max", "--metrics", "say", "ok"], {
+  const code = await runCli(["--model", "deepseek-v4-flash", "--thinking", "max", "--prompt-profile", "deepseek", "--metrics", "say", "ok"], {
     stdout: (text) => stdout.push(text),
     stderr: (text) => stderr.push(text),
   }, dependencies);
@@ -271,10 +276,12 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(selectedSession, "new");
   assert.equal(restoreSavedModel, false);
   assert.equal(selectedThinking, "max");
+  assert.equal(selectedPromptProfile, "deepseek");
   assert.equal(selectedAgentMode, "build");
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);
+  assert.match(stderr.join(""), /prompt-profile.*deepseek/);
   assert.match(stderr.join(""), /context:untrusted.*project resources disabled/s);
   assert.match(stderr.join(""), /\[evidence\].*files=README\.md.*bash=0 · tool-errors=0/s);
   assert.match(stderr.join(""), /evidence:attention.*no recognized validation/s);

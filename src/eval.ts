@@ -11,6 +11,7 @@ import { DEFAULT_MODEL_ID, sanitizeError, THINKING_LEVELS, type DeepSeekThinking
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import { summarizeEvalTasks, type EvalSampleResult, type EvalTaskKind, type EvalTaskPlan, type EvalTaskSummary } from "./eval-report.ts";
 import { runCli } from "./main.ts";
+import { DEFAULT_PROMPT_PROFILE, PROMPT_PROFILES, type PromptProfile } from "./prompt-profile.ts";
 
 interface EvalTask {
   id: string;
@@ -27,6 +28,7 @@ interface EvalOptions {
   live: boolean;
   model: string;
   thinking: DeepSeekThinkingLevel;
+  promptProfile: PromptProfile;
   task: string;
   runs: number;
   maxCostUsd: number;
@@ -47,6 +49,7 @@ export interface EvalSummary {
   schemaVersion: 3;
   suite: "deepseek-code-v1";
   agent: "deepseek-code";
+  promptProfile: PromptProfile;
   passed: boolean;
   plannedSamples: number;
   completedSamples: number;
@@ -216,6 +219,7 @@ export function parseEvalArgs(args: string[]): EvalOptions {
     live: false,
     model: DEFAULT_MODEL_ID,
     thinking: "high",
+    promptProfile: DEFAULT_PROMPT_PROFILE,
     task: "all",
     runs: 1,
     maxCostUsd: DEFAULT_MAX_COST_USD,
@@ -228,6 +232,8 @@ export function parseEvalArgs(args: string[]): EvalOptions {
     else if (arg.startsWith("--model=")) options.model = arg.slice("--model=".length);
     else if (arg === "--thinking") options.thinking = readValue(args, index++, arg) as DeepSeekThinkingLevel;
     else if (arg.startsWith("--thinking=")) options.thinking = arg.slice("--thinking=".length) as DeepSeekThinkingLevel;
+    else if (arg === "--prompt-profile") options.promptProfile = readValue(args, index++, arg) as PromptProfile;
+    else if (arg.startsWith("--prompt-profile=")) options.promptProfile = arg.slice("--prompt-profile=".length) as PromptProfile;
     else if (arg === "--task") options.task = readValue(args, index++, arg);
     else if (arg.startsWith("--task=")) options.task = arg.slice("--task=".length);
     else if (arg === "--runs") options.runs = Number(readValue(args, index++, arg));
@@ -242,6 +248,7 @@ export function parseEvalArgs(args: string[]): EvalOptions {
   options.model = options.model.replace(/^deepseek\//, "");
   if (!options.model) throw new Error("Model ID cannot be empty");
   if (!THINKING_LEVELS.includes(options.thinking)) throw new Error(`Invalid thinking level: ${options.thinking}`);
+  if (!PROMPT_PROFILES.includes(options.promptProfile)) throw new Error(`Invalid prompt profile: ${options.promptProfile}`);
   if (!Number.isInteger(options.runs) || options.runs < 1 || options.runs > 5) {
     throw new Error("--runs must be an integer from 1 to 5");
   }
@@ -256,7 +263,7 @@ export function parseEvalArgs(args: string[]): EvalOptions {
 
 export function evalUsage(): string {
   return [
-    "Usage: npm run eval -- [--task ID|all] [--model MODEL] [--thinking off|high|max] [--runs 1..5] [--max-cost-usd USD] [--live]",
+    "Usage: npm run eval -- [--task ID|all] [--model MODEL] [--thinking off|high|max] [--prompt-profile pi|deepseek] [--runs 1..5] [--max-cost-usd USD] [--live]",
     "",
     "Without --live, prints the planned paid requests and does not call DeepSeek.",
     `Tasks: ${TASKS.map((task) => task.id).join(", ")}`,
@@ -295,6 +302,7 @@ function failedResult(options: EvalOptions, task: EvalTask, run: number, error: 
     run,
     model: options.model,
     thinking: options.thinking,
+    promptProfile: options.promptProfile,
     passed: false,
     costUsd: 0,
     toolCalls: 0,
@@ -320,6 +328,8 @@ async function executeProtocolTask(options: EvalOptions, task: EvalTask, run: nu
       options.model,
       "--thinking",
       options.thinking,
+      "--prompt-profile",
+      options.promptProfile,
       task.prompt,
     ], { maxBuffer: 4 * 1024 * 1024 });
     const metrics = parseMetrics(stderr);
@@ -333,6 +343,7 @@ async function executeProtocolTask(options: EvalOptions, task: EvalTask, run: nu
       run,
       model: options.model,
       thinking: options.thinking,
+      promptProfile: options.promptProfile,
       passed: score(task, stdout, metrics),
       output: sanitizeError(stdout.trim()).slice(0, 160),
       metrics,
@@ -462,6 +473,8 @@ async function executeRepairTask(
         options.model,
         "--thinking",
         options.thinking,
+        "--prompt-profile",
+        options.promptProfile,
         prompt,
       ], {
         stdout: (text) => stdout.push(text),
@@ -516,6 +529,7 @@ async function executeRepairTask(
       run,
       model: options.model,
       thinking: options.thinking,
+      promptProfile: options.promptProfile,
       passed: finalAttempt.code === 0 && score(task, finalAttempt.output, finalAttempt.metrics) && checks.testPassed && checks.protectedFilesUnchanged && checks.expectedFilesChanged && checks.allFixtureFilesPresent && checks.noUnexpectedFiles && feedbackPassed,
       output: finalAttempt.output,
       checks,
@@ -557,6 +571,7 @@ export function summarizeEval(
   results: ReadonlyArray<EvalSampleResult>,
   maxCostUsd: number,
   maxProviderRequests: number = plans.reduce((total, plan) => total + plan.plannedSamples, 0),
+  promptProfile: PromptProfile = (results[0]?.promptProfile as PromptProfile | undefined) ?? DEFAULT_PROMPT_PROFILE,
 ): EvalSummary {
   const plannedSamples = plans.reduce((total, plan) => total + plan.plannedSamples, 0);
   const passedSamples = results.filter((result) => result.passed).length;
@@ -569,6 +584,7 @@ export function summarizeEval(
     schemaVersion: 3,
     suite: EVAL_SUITE,
     agent: "deepseek-code",
+    promptProfile,
     passed: !incomplete && !budgetExceeded && passedSamples === plannedSamples,
     plannedSamples,
     completedSamples: results.length,
@@ -601,7 +617,7 @@ export async function runEval(args: string[]): Promise<number> {
   const maxProviderRequests = tasks.reduce((total, task) => total + (task.maxAttempts ?? 1), 0) * options.runs;
   const plans: EvalTaskPlan[] = tasks.map((task) => ({ task: task.id, taskKind: task.kind, plannedSamples: options.runs }));
   if (!options.live) {
-    process.stdout.write(`${JSON.stringify({ type: "eval_plan", schemaVersion: 3, suite: EVAL_SUITE, agent: "deepseek-code", live: false, model: options.model, thinking: options.thinking, runs: options.runs, tasks: plans, sampleCount, maxProviderRequests, maxCostUsd: options.maxCostUsd })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: "eval_plan", schemaVersion: 3, suite: EVAL_SUITE, agent: "deepseek-code", live: false, model: options.model, thinking: options.thinking, promptProfile: options.promptProfile, runs: options.runs, tasks: plans, sampleCount, maxProviderRequests, maxCostUsd: options.maxCostUsd })}\n`);
     return 0;
   }
   const results: EvalResult[] = [];
@@ -620,7 +636,7 @@ export async function runEval(args: string[]): Promise<number> {
     }
     if (stop) break;
   }
-  const summary = summarizeEval(plans, results, options.maxCostUsd, maxProviderRequests);
+  const summary = summarizeEval(plans, results, options.maxCostUsd, maxProviderRequests, options.promptProfile);
   process.stdout.write(`${JSON.stringify(summary)}\n`);
   return summary.passed ? 0 : 1;
 }

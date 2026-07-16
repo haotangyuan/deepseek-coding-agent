@@ -124,7 +124,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 85 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、本地设置、项目信任、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 88 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -351,6 +351,8 @@ flowchart TB
 
 目标：通过数据改善任务完成率，而不是增加隐藏智能。
 
+状态：**首个可评测切片已完成（2026-07-16），默认值是否切换仍待重复 A/B。**
+
 候选实验：
 
 - 固定、短小的 DeepSeek Coding System Prompt。
@@ -358,6 +360,17 @@ flowchart TB
 - 保持工具顺序和 Schema 稳定，量化 cache hit。
 - 仅在评测证实后提供显式预设，例如 Flash/high、Flash/max、Pro/max；切换 Pro 必须明确确认成本变化。
 - 不做基于模糊“复杂度评分”的自动模型路由。
+
+已落地：
+
+- `--prompt-profile pi|deepseek` 显式选择，默认 `pi`，不暗中改变模型、thinking 或工具权限。
+- `deepseek` 只通过 Pi `appendSystemPromptOverride` 追加短、稳定的 Coding Workflow；不替换 Pi 默认 System Prompt，也不复制或重排 AGENTS/Skills/Prompt Templates。
+- TUI 顶部、状态行、`/status`、一次性 stderr 和 Schema v3 评测样本/计划都显示当前 Profile。
+- 自动化覆盖纯函数、CLI 参数、真实 `DefaultResourceLoader` 与受信任项目 `.pi/APPEND_SYSTEM.md` 的组合，共 88 项；自动化不调用真实 API。
+
+尚未完成：至少三次同模型、同 thinking、同任务的 `pi`/`deepseek` 重复对照。在完成率、工具错误、cache、延迟和成本没有稳定改善前，默认值保持 `pi`；Flash/high、Flash/max、Pro/max 工作档位继续暂缓。
+
+首轮链路 Smoke（Flash/high、`exact`、各一次）两档均通过且无工具/Provider 错误：`pi` 1362ms、$0.0000721，`deepseek` 1043ms、$0.0000330。后者当次命中 384 cache token，但缓存是 best-effort 且两次请求前缀不同，这组数据不能证明 Prompt 更快或更省；只确认 Profile 能进入真实请求并被评测结果记录。
 
 ### P2：增强能力
 

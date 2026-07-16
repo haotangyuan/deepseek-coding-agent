@@ -31,6 +31,7 @@
 - 用户偏好保存在私有的 `~/.pi/agent/deepseek-code/settings.json`；模型、thinking、mode、approval 和 reasoning 展示可跨进程恢复，显式 CLI 参数始终优先。
 - 默认使用 Pi `SessionManager` 持久化 JSONL，支持 workspace 内 continue/resume、标题、列表、树导航、fork/clone 和自动/手动 Compaction。
 - 一次性任务支持显式 `off/high/max` thinking、内存 Session 和结构化指标；固定评测默认 dry-run，只有 `--live` 才调用真实 API。
+- 支持显式 `--prompt-profile pi|deepseek`：`pi` 保持上游默认提示，`deepseek` 在不替换 Pi 提示和项目上下文的前提下追加稳定的 inspect → edit → diff → validate → report 工作流；TUI、一次性输出和评测结果都会显示当前档位。
 - Provider 错误按 DeepSeek 官方 400/401/402/422/429/500/503 语义显示分类、是否可重试和下一步动作；原始详情先遮蔽敏感值。
 - 支持 `--doctor` 离线检查 Node、DeepSeek 模型与凭据存在性、Git、rg/fd、Session 可写性、TTY 和上下文资源；不会创建 Session 或调用模型。
 - 已复用 Pi Session/Tree 选择器；跨工作区恢复、MCP 和多 Agent 仍不在当前范围。
@@ -155,6 +156,12 @@ npm start -- --mode plan --approval ask "Inspect this repository and propose a f
 npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with OK"
 ```
 
+显式启用待评测的 DeepSeek Coding Prompt（当前默认仍为 `pi`，避免未经对照就改变日用行为）：
+
+```bash
+npm start -- --prompt-profile deepseek "Inspect this repository and explain the narrowest useful check"
+```
+
 继续当前工作区最近会话：
 
 ```bash
@@ -217,10 +224,11 @@ npm test
 ```bash
 npm run build
 npm run eval -- --task all --model deepseek-v4-flash --thinking high
+npm run eval -- --task all --model deepseek-v4-flash --thinking high --prompt-profile deepseek
 npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --runs 1 --max-cost-usd 0.02
 ```
 
-`--runs` 最多 5 次；默认观测成本上限为 0.02 美元，达到上限后不会开始下一次请求。单次请求的最终成本只能在 Provider 返回 usage 后得知，因此该参数不是预付费硬限额；超过上限会在汇总中标记失败。Pro 必须用 `--model deepseek-v4-pro` 显式选择。Schema v3 的 dry-run 同时显示逻辑样本数和最大 Provider 请求数；真实执行每个样本输出 `eval_result`，最后输出包含按任务通过率、延迟、成本和工具错误的 `eval_summary`。任务、格式、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
+`--runs` 最多 5 次；默认观测成本上限为 0.02 美元，达到上限后不会开始下一次请求。单次请求的最终成本只能在 Provider 返回 usage 后得知，因此该参数不是预付费硬限额；超过上限会在汇总中标记失败。Pro 必须用 `--model deepseek-v4-pro` 显式选择。Schema v3 的 dry-run 同时显示逻辑样本数、最大 Provider 请求数和 `promptProfile`；真实执行每个样本输出 `eval_result`，最后输出包含按任务通过率、延迟、成本和工具错误的 `eval_summary`。任务、格式、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
 
 `repair-js`、`repair-multi-file`、`repair-feedback` 和 `repair-config` 会在系统临时目录创建有缺陷的极小项目。评测器只自动批准 fixture 内的 write/edit，拒绝 Bash；Agent 结束后由评测器运行测试，确认指定源码确实改变、原文件没有缺失、受保护文件未变且没有创建额外文件，然后删除整个临时目录。`repair-feedback` 的隐藏回归测试位于 Agent 工作区外：第一次失败后，评测器只回填脱敏、截断且不含测试路径/堆栈的失败摘要，最多再执行一次 60 秒修复尝试。
 
