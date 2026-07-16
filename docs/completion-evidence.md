@@ -42,7 +42,7 @@ flowchart LR
 | `toolErrorsObserved` | 本轮产生过错误 Tool Result | 所有工具错误仍未解决 |
 | `providerErrorUnresolved` | 最后的错误/重试事件未显示恢复 | Provider 之外不存在逻辑错误 |
 
-当 write/edit 已发生但没有实际 diff 或可识别验证时，界面显示 `REVIEW`，但不会自动发送一轮“请继续验证”。这避免隐藏成本，也避免 Runtime 替模型猜测任务完成条件。
+当 write/edit 已发生但没有实际 diff 或可识别验证时，界面显示 `REVIEW`，并提供 `/diff`、`/verify`、`/undo`。Evidence 本身仍不会自动发送“请继续验证”；只有用户完成 `/verify` 预览后显式输入 `/verify confirm`，才新增一个 Agent 回合。
 
 ## 4. 验证命令识别
 
@@ -66,14 +66,14 @@ checks=npm test:passed
 bash=2 · tool-errors=0
 ```
 
-TUI 在 settled 后显示紧凑卡片。存在证据缺口或失败时标题为 `COMPLETION EVIDENCE · REVIEW`；否则显示成功色。页脚固定说明这是 observed facts，并且没有额外模型请求。
+TUI 在 settled 后显示紧凑卡片。存在证据缺口或失败时标题为 `COMPLETION EVIDENCE · REVIEW`；否则显示成功色。未验证修改的卡片明确说明 `/verify confirm` 之前没有额外请求，其余卡片继续声明只是 observed facts。
 
 ## 6. 已知限制与后续门槛
 
 - Bash 可以修改文件，但 Pi 当前工具结果不提供文件变更清单，因此只记录 Bash 被执行，不猜文件。
 - 验证白名单是保守启发式，不尝试完整解析 Shell。
 - 预先存在的工作区修改和本轮修改仍需结合 Git 状态判断。
-- 当前不阻止 Agent 完成。只有评测证明提示型 Evidence 仍频繁遗漏必要验证后，才考虑可配置 Completion Gate。
+- 当前不阻止 Agent 完成，也不自动验证；用户可以继续输入来接受现状。显式验证流程见 `docs/verification-loop.md`。
 - 后续可以在不增加模型调用的前提下加入基线/结束 Git porcelain 差异，但必须正确处理 rename、空格路径和用户既有修改。
 
 ## 7. 自动化覆盖
@@ -87,7 +87,7 @@ TUI 在 settled 后显示紧凑卡片。存在证据缺口或失败时标题为 
 
 2026-07-16 验证结果：
 
-- `npm run check`、`npm run build`、45/45 自动化测试通过。
+- 初始 Evidence 里程碑的 `npm run check`、`npm run build`、45/45 自动化测试通过；当前项目总测试数见 README 与产品状态文档。
 - `deepseek-v4-flash + high + auto-read` 极短 Smoke 完成 `ls → tool result → agent settled → Evidence`。
 - Smoke 最终文本精确匹配，无 Provider 错误；只读任务没有被误报为缺少 diff/验证。
 - Smoke 只输出模型 ID 和事件布尔摘要，没有保存 reasoning、工具内容、会话或密钥。

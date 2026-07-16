@@ -261,6 +261,7 @@ test("parses supported interactive commands without treating normal prompts as c
   assert.deepEqual(parseInteractiveCommand("/thinking high"), { name: "thinking", argument: "high" });
   assert.deepEqual(parseInteractiveCommand("/cache"), { name: "cache", argument: "" });
   assert.deepEqual(parseInteractiveCommand("/diff"), { name: "diff", argument: "" });
+  assert.deepEqual(parseInteractiveCommand("/verify confirm"), { name: "verify", argument: "confirm" });
   assert.deepEqual(parseInteractiveCommand("/undo confirm"), { name: "undo", argument: "confirm" });
   assert.deepEqual(parseInteractiveCommand("/mode plan"), { name: "mode", argument: "plan" });
   assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
@@ -364,6 +365,23 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   session.emit({ type: "agent_settled" });
   await flush();
   assert.match(plainTerminalOutput(terminal), /COMPLETION EVIDENCE.*files=none recorded.*Observed facts only/s);
+
+  session.emit({ type: "tool_execution_start", toolCallId: "write-1", toolName: "write", args: { path: "src/example.ts" } });
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "write-1",
+    toolName: "write",
+    result: { content: [{ type: "text", text: "wrote file" }], details: undefined },
+    isError: false,
+  });
+  session.emit({ type: "agent_settled" });
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /COMPLETION EVIDENCE · REVIEW.*files=src\/example\.ts.*Choose \/diff · \/verify · \/undo/s);
+  assert.match(plainTerminalOutput(terminal), /No extra request until \/verify confirm/);
+  assert.deepEqual(session.prompts, ["first", "second", "third"]);
+  terminal.type("accept current changes");
+  await flush();
+  assert.deepEqual(session.prompts, ["first", "second", "third", "accept current changes"]);
 
   session.emit({
     type: "tool_execution_end",
@@ -539,6 +557,118 @@ test("renders the latest turn diff and requires explicit confirmation before und
   await flush();
   assert.equal(undoCalls, 1);
   assert.match(plainTerminalOutput(terminal), /UNDO COMPLETE.*src\/example\.ts.*conversation remains/s);
+
+  terminal.type("/exit");
+  await running;
+});
+
+test("previews explicit verification without a request and starts exactly one confirmed Agent turn", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const snapshot = createSnapshot();
+  const checkpoints = {
+    snapshot: () => ({ status: "ready" as const, files: ["src/example.ts"], bashObserved: false, warnings: [] }),
+    diff: () => ({ files: ["src/example.ts"], patch: "+changed", bashObserved: false, warnings: [] }),
+    undo: async () => ({ restoredFiles: ["src/example.ts"] }),
+  };
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    agentMode: "build",
+    checkpoints,
+    sessionControls: createSessionControls(),
+    terminal,
+    clearContext: () => undefined,
+    getContextSnapshot: () => snapshot,
+    setProjectResourcesEnabled: async () => undefined,
+    setAgentMode: () => undefined,
+    getGitStatus: async () => ({ available: true, status: " M src/example.ts" }),
+  });
+  const running = mode.run();
+  await flush();
+
+  terminal.type("/verify confirm");
+  await flush();
+  assert.deepEqual(session.prompts, []);
+  assert.match(plainTerminalOutput(terminal), /run \/verify first.*exact suggested command/s);
+
+  terminal.type("/verify");
+  await flush();
+  assert.deepEqual(session.prompts, []);
+  assert.match(plainTerminalOutput(terminal), /VERIFY READY.*npm run check.*new paid Agent turn/s);
+  assert.match(plainTerminalOutput(terminal), /Preview only.*no model request.*no command executed/s);
+
+  terminal.type("/verify confirm");
+  await flush();
+  assert.equal(session.prompts.length, 1);
+  assert.match(session.prompts[0]!, /without modifying files/);
+  assert.match(session.prompts[0]!, /npm run check/);
+  assert.match(plainTerminalOutput(terminal), /\[verify\] npm run check/);
+
+  session.emit({ type: "tool_execution_start", toolCallId: "verify-pass", toolName: "bash", args: { command: "npm run check" } });
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "verify-pass",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "ok" }], details: undefined },
+    isError: false,
+  });
+  session.emit({ type: "agent_settled" });
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /checks=npm run check:passed/);
+
+  session.emit({ type: "tool_execution_start", toolCallId: "verify-fail", toolName: "bash", args: { command: "npm run check" } });
+  session.emit({
+    type: "tool_execution_end",
+    toolCallId: "verify-fail",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "x".repeat(5000) }], details: undefined },
+    isError: true,
+  });
+  session.emit({ type: "agent_settled" });
+  await flush();
+  const failedOutput = plainTerminalOutput(terminal);
+  assert.match(failedOutput, /checks=npm run check:failed.*latest validation failed: npm run check/s);
+  assert.match(failedOutput, /x{20,}…/);
+  assert.doesNotMatch(failedOutput, /x{500}/);
+
+  terminal.type("/exit");
+  await running;
+});
+
+test("rejects verification when no tracked write or edit is available", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    agentMode: "build",
+    checkpoints: new TurnCheckpointManager(process.cwd()),
+    sessionControls: createSessionControls(),
+    terminal,
+    clearContext: () => undefined,
+    getContextSnapshot: createSnapshot,
+    setProjectResourcesEnabled: async () => undefined,
+    setAgentMode: () => undefined,
+    getGitStatus: async () => ({ available: true, status: "" }),
+  });
+  const running = mode.run();
+  await flush();
+
+  terminal.type("/verify");
+  await flush();
+  assert.deepEqual(session.prompts, []);
+  assert.match(plainTerminalOutput(terminal), /no tracked write\/edit changes are available to verify/);
 
   terminal.type("/exit");
   await running;

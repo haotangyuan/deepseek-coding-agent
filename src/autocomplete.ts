@@ -26,6 +26,7 @@ const builtinCommands: SlashCommand[] = [
   { name: "status", description: "Show the current runtime state" },
   { name: "cache", description: "Inspect DeepSeek cache usage for the latest turn" },
   { name: "diff", description: "Review write/edit changes from the latest mutating turn" },
+  { name: "verify", argumentHint: "[confirm]", description: "Preview or start explicit validation" },
   { name: "undo", argumentHint: "[confirm]", description: "Safely undo the latest write/edit turn" },
   { name: "session", description: "Show the active session" },
   { name: "sessions", argumentHint: "[list]", description: "Select or list workspace sessions" },

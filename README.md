@@ -23,7 +23,7 @@
 - 默认保护 `.env`、常见凭据目录/文件和 SSH 私钥名；公开的 `.env.example/.sample/.template` 仍可读写，明显 Bash 敏感路径字面量在审批前阻断。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
 - 通过 `/diff` 集中审阅最近修改轮次的 write/edit 增量；`/undo` + `/undo confirm` 在冲突检查后恢复任务前文件状态，并支持 Session resume 后继续撤销。
-- 每轮 settled 后展示 Completion Evidence：明确记录 write/edit 文件、实际 diff 查看、可识别验证结果和错误事实；不自动追加付费模型轮次，也不把未知命令猜成测试。
+- 每轮 settled 后展示 Completion Evidence：明确记录 write/edit 文件、实际 diff 查看、可识别验证结果和错误事实；未验证修改提供 `/diff`、`/verify`、`/undo` 三条显式路径，不自动追加付费模型轮次。
 - Cache Inspector 展示本轮和 Session 累计 cache hit/miss/rate；`/cache` 可随时重看，只有相邻足量轮次下降至少 20pp 才提示事实型告警。
 - 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消；Provider/工具失败、自动重试和取消使用 80 列友好的紧凑恢复卡片。
 - 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。
@@ -82,6 +82,7 @@ npm start
 /status
 /cache
 /diff
+/verify [confirm]
 /undo [confirm]
 /session
 /sessions [list]
@@ -106,6 +107,8 @@ npm start
 Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steering 排队；Ctrl+C 取消当前运行，空闲时连续两次 Ctrl+C 退出。reasoning 默认只显示长度，通过 `/reasoning` 展开或重新折叠。
 
 `/diff` 展示最近一个包含 Pi write/edit 的 Agent 轮次，而不是整个 Git 工作区的混合差异。`/undo` 先显示恢复范围，只有 `/undo confirm` 才写入磁盘；如果文件在 Agent 完成后又被用户或其他进程修改，整次撤销会被拒绝。Bash 副作用不在自动撤销范围内。详细边界见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)。
+
+`/verify` 只从 `package.json`、`pyproject.toml`、`Cargo.toml`、`go.mod` 等已知入口发现并展示一个候选检查，不调用模型也不执行命令。只有看过候选与费用提示后输入 `/verify confirm`，才会新增一次 Agent 回合；该回合要求只运行展示过的精确命令且不修改文件，Bash 仍按现有策略审批。Pi 会限制长 Bash 输出，并把被截断的完整输出保存在本机临时文件。详细边界见 [docs/verification-loop.md](docs/verification-loop.md)。
 
 `/cache` 直接读取 Pi 已归一化的 DeepSeek usage：本轮通过提交前后 SessionStats 做差，Session 数值包含 JSONL 全历史的实际计费 usage。它不会为了诊断缓存再发送请求，也不会猜测命中下降原因。
 

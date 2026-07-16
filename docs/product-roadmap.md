@@ -1,7 +1,7 @@
 # DeepSeek Coding Agent 产品与技术路线图
 
 > 文档性质：持续维护的产品、架构与开发决策基线
-> 最近更新：2026-07-16
+> 最近更新：2026-07-16（显式验证闭环）
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
 > M3 实现基线提交：`4d57b48`
@@ -342,7 +342,7 @@ Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、Cache Inspector、Plan/Build、敏感路径保护和进程内精确 Bash 授权已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md` 和 `docs/session-approvals.md`。
+当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、显式验证闭环、Cache Inspector、Plan/Build、敏感路径保护和进程内精确 Bash 授权已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/verification-loop.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md` 和 `docs/session-approvals.md`。
 
 实验方向：
 
@@ -463,7 +463,7 @@ npm test
 | Done | TUI 命令与安全文件补全 | 已完成动态命令、DeepSeek 模型、资源、树节点和工作区文件补全 |
 | Done | Pi Session/Tree 选择器 | 已完成搜索、过滤、取消、树导航和当前工作区会话热切换 |
 | Done | 本轮 Diff 与 Undo | 已完成本轮聚合补丁、冲突保护、Resume 和显式文件恢复 |
-| P0 | 显式验证闭环 | 在可逆修改基础上减少“改了但未验证”的不完整任务 |
+| Done | 显式验证闭环 | 已完成只读候选发现、双阶段确认和验证 Evidence 回收 |
 | P1 | DeepSeek 量化优化 | 用固定任务提升完成率、缓存和成本表现 |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
@@ -518,6 +518,7 @@ npm test
 | D-028 | 优先复用 Pi 原生 ls/grep，find 通过依赖门槛后再开放 | 已采纳 | 提高 DeepSeek 仓库探索信息密度；不复制搜索实现，也不让缺少 fd 的工具进入默认稳定前缀 |
 | D-029 | Completion Evidence 先观察，不自动续跑或强制阻断 | 已采纳 | 用 settled 事件呈现真实修改、diff、验证和错误证据；避免隐藏成本及不可靠完成判断 |
 | D-030 | Cache Inspector 只消费 Pi 累计 usage 并使用快照差值 | 已采纳 | 不重复解析 Provider；0 token 显示 n/a，足量相邻轮次下降 20pp 才做事实型提示 |
+| D-031 | 验证必须先预览精确命令，再显式确认一个新 Agent 回合 | 已采纳 | 避免隐藏请求和命令；继续复用 Pi Tool Loop、Bash 截断及现有审批 |
 | D-031 | Plan/Build 与审批模式保持正交且不持久化 | 已采纳 | Plan 通过活动工具与策略钩子双重只读；Build 不绕过审批，resume 由当前启动参数决定 |
 | D-032 | 敏感路径默认拒绝，公开配置模板显式放行 | 已采纳 | 优先防止凭据进入模型上下文；保留 `.env.example/.sample/.template` 的正常开发流程，不夸大 Bash 字面量检测 |
 | D-033 | Session Bash 授权只匹配完整命令且不持久化 | 已采纳 | 降低重复审批摩擦，同时避免通配符误放行、跨会话陈旧授权和修改工具批量授权 |

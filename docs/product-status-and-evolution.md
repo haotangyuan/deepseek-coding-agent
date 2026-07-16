@@ -2,7 +2,7 @@
 
 > 文档性质：当前产品事实、体验判断与下一阶段实施顺序的主入口
 > 最近核对：2026-07-16
-> 项目提交基线：`d8ed1f5dee71fc2a309b0013a12729a15da73961`
+> 项目开发起点：`17ff2df226a4447846d5386a8f051ce405e9b57e`
 > Pi 本地研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > Pi 上游观察点：`5220aba6`，相对本地研究基线前进 13 个提交，但未合并到本地
 > 当前项目依赖：`@earendil-works/pi-coding-agent@0.80.7`、`@earendil-works/pi-tui@0.80.7`
@@ -118,12 +118,12 @@ flowchart TB
 | 交互 TUI | 多轮、Markdown、折叠 thinking、工具卡、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`；`src/autocomplete.ts` `createInteractiveAutocompleteProvider()`；`test/interactive.test.ts`、`test/autocomplete.test.ts` | 日用可用；工具卡仍需折叠 |
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；可临时过滤项目资源并 reload | `src/context-resources.ts:61`、`:92`；`test/context-resources.test.ts` | 稳定；缺启动信任选择 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；Pi 选择器支持会话热切换和树导航，仍限制当前 cwd | `src/sessions.ts` `createSessionControls()`；`src/interactive.ts` `showSessions()`、`handleTree()`；对应 Session/TUI 测试 | 机制与主要交互完整 |
-| Completion Evidence | 记录修改、diff 查看、识别出的验证命令和未解决错误，不偷偷追加模型请求 | `src/completion-evidence.ts:77`；`test/completion-evidence.test.ts` | 观察型可用；未形成闭环 |
+| Completion Evidence 与验证 | 记录修改、diff、验证和错误；`/verify` 只预览候选，`/verify confirm` 才新增一次 Agent 回合 | `src/completion-evidence.ts`；`src/validation-suggestions.ts`；`src/interactive.ts` `handleVerify()` | 显式闭环可用；不自动 Gate |
 | Cache Inspector | 本轮和 Session hit/miss/rate，足量样本下降告警 | `src/cache-inspector.ts:42`；`test/cache-inspector.test.ts` | 观测可用 |
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 72 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 77 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -138,11 +138,10 @@ flowchart TB
 
 ### 5.2 仍然会造成日常摩擦
 
-1. **Evidence 只提醒，不帮助完成下一步**：发现“改了但未验证”后，仍需用户自己重新输入指令。
-2. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
-3. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
-4. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
-5. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+1. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
+2. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
+3. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
+4. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
 
 ## 6. 外部产品带来的设计启发
 
@@ -282,24 +281,25 @@ flowchart TB
 - `/undo` 绝不调用 `git reset/checkout/clean`，不覆盖 checkpoint 之后的外部修改。
 - TUI 始终准确说明“文件撤销”而非“完整任务回滚”。
 
-### P0-D：验证驱动的完成闭环
+### P0-D：验证驱动的完成闭环（已完成，2026-07-16）
 
 目标：减少“代码改了，但没看 diff、没跑测试就结束”。
 
-功能：
+实际交付：
 
 - 保留当前 Completion Evidence，不立即改成强制自动续跑。
-- settled 后如果发生源码修改但没有 diff 或验证，提供明确操作：`v` 让 Agent 继续验证、`d` 查看本轮 diff、`u` 撤销、Enter 接受现状。
-- `v` 必须是用户显式触发的新模型轮次，并在提交前显示将继续产生费用。
-- 增加项目验证建议发现：只读取 package.json、pyproject.toml、Cargo.toml 等已知入口，不自动执行。
+- settled 后如果发生 write/edit 但没有 diff 或验证，提供 `/diff`、`/verify`、`/undo`；继续输入普通消息即接受现状。
+- `/verify` 只读取固定 manifest 并展示一个候选、来源与费用提示；`/verify confirm` 必须紧随预览，才新增一次 Agent 回合。
+- package script 按 check/test/lint/build 选择，并支持 Python、Cargo、Go、Maven、Gradle 固定入口；未知项目不猜命令。
 - 对已批准的常见安全检查支持当前进程精确授权，继续拒绝通配符放行。
-- 失败验证结果以短摘要回填模型，原始长日志保留在本地临时文件并提供路径，不整段塞回上下文。
+- TUI 工具结果保持 240 字符摘要；模型侧复用 Pi Bash 的行数/字节上限与 `pi-bash` 临时完整输出，不复制日志截断器。
+- 详细设计见 `docs/verification-loop.md`。
 
-验收：
+验收结果：
 
-- 修改未验证、验证失败、验证通过、用户跳过四条路径都有 TUI 测试。
-- 不因 Evidence 自动增加请求或自动执行未知命令。
-- 长测试日志不会淹没 TUI 或模型上下文。
+- 修改未验证、验证失败、验证通过、无 checkpoint/继续输入路径均由替身 Session 或现有 TUI 测试覆盖。
+- `/verify` 零请求，未预览确认失败，预览后确认恰好一个请求；自动化不调用真实 API。
+- 5000 字符工具失败结果在 TUI 截断；Pi 源码确认长 Bash 输出保存临时文件。
 
 ### P1-A：本地设置与项目信任
 
@@ -400,11 +400,13 @@ flowchart TB
 
 完成证据：pre/post-image、聚合 patch、显式二次确认、冲突整次拒绝、权限/新文件恢复和 Resume 已覆盖；72/72 自动化与临时 Git 仓库 TTY 验收通过。
 
-### Iteration 4：显式验证闭环
+### Iteration 4：显式验证闭环（已完成）
 
 预计修改：扩展 `src/completion-evidence.ts` 和 TUI settled 操作，不改变 Pi Agent Loop。
 
-成功标准：未验证修改会提供清晰的 diff/verify/undo 选择；只有用户选择 verify 才增加请求；长错误反馈保持脱敏和有界。
+成功标准：未验证修改会提供清晰的 diff/verify/undo 选择；只有用户预览后确认 verify 才增加请求；长错误反馈保持脱敏和有界。
+
+完成证据：固定 manifest 候选发现、双阶段确认、精确验证 prompt、Completion Evidence 回收和 Pi Bash 截断边界已落地；77/77 自动化通过。真实 DeepSeek Flash TTY Smoke 完成 write → 零请求预览 → 显式确认 → 精确 Bash 审批 → passed Evidence，临时工作区和隔离 Session 已清理。
 
 ## 12. 每次迭代的完成门槛
 

@@ -45,6 +45,11 @@ import {
   type ApprovalMode,
   type ApprovalRequest,
 } from "./tool-policy.ts";
+import {
+  createVerificationPrompt,
+  discoverValidationSuggestion,
+  type ValidationSuggestion,
+} from "./validation-suggestions.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type ThinkingLevel = AgentSession["thinkingLevel"];
@@ -87,7 +92,7 @@ export interface InteractiveModeOptions {
 
 export type InteractiveCommand =
   | { name: "help" | "status" | "cache" | "diff" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
-  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo"; argument: string }
+  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -183,8 +188,8 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
       argument,
     };
   }
-  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork", "undo"].includes(name)) {
-    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo", argument };
+  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork", "undo", "verify"].includes(name)) {
+    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify", argument };
   }
   return { name: "unknown", argument: name };
 }
@@ -356,6 +361,7 @@ export class InteractiveMode {
   private agentMode: AgentMode;
   private unsubscribe: (() => void) | undefined;
   private nextSessionSelection: SessionSelection | undefined;
+  private pendingVerification: ValidationSuggestion | undefined;
 
   constructor(options: InteractiveModeOptions) {
     initTheme("dark");
@@ -513,6 +519,7 @@ export class InteractiveMode {
     }
 
     const continuingRun = this.session.isStreaming;
+    this.pendingVerification = undefined;
     this.transcript.addChild(new Text(`${colors.accent("you")}  ${sanitizeError(text)}`, 1, 0));
     if (!continuingRun) {
       this.completionEvidence.reset();
@@ -550,7 +557,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /cache /diff /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /cache /diff /verify [confirm] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -562,6 +569,8 @@ export class InteractiveMode {
       this.showCacheReport(this.cacheInspector.current(this.session.getSessionStats()));
     } else if (command.name === "diff") {
       this.showTurnDiff();
+    } else if (command.name === "verify") {
+      await this.handleVerify(command.argument);
     } else if (command.name === "undo") {
       await this.handleUndo(command.argument);
     } else if (command.name === "session") {
@@ -1104,12 +1113,16 @@ export class InteractiveMode {
       this.updateStatus("idle");
     } else if (event.type === "agent_settled") {
       this.showCacheReport(this.cacheInspector.finish(this.session.getSessionStats()));
-      const summary = summarizeCompletionEvidence(this.completionEvidence.snapshot());
+      const evidence = this.completionEvidence.snapshot();
+      const summary = summarizeCompletionEvidence(evidence);
+      const needsClosure = evidence.changedFiles.length > 0 && (!evidence.diffReviewed || evidence.checks.length === 0);
       this.transcript.addChild(new NoticeCard({
         title: summary.attention.length > 0 ? "COMPLETION EVIDENCE · REVIEW" : "COMPLETION EVIDENCE",
         detail: sanitizeError(summary.detail),
-        action: summary.attention.length > 0 ? sanitizeError(summary.attention.join("; ")) : undefined,
-        footer: "Observed facts only · no extra model request",
+        action: needsClosure
+          ? `${sanitizeError(summary.attention.join("; "))}. Choose /diff · /verify · /undo, or continue typing to accept.`
+          : summary.attention.length > 0 ? sanitizeError(summary.attention.join("; ")) : undefined,
+        footer: needsClosure ? "No extra request until /verify confirm" : "Observed facts only · no extra model request",
         tone: summary.attention.length > 0 ? colors.warning : colors.success,
       }));
       this.updateStatus("idle");
@@ -1170,6 +1183,61 @@ export class InteractiveMode {
     this.transcript.addChild(new TurnDiffCard(diff.files, diff.patch, warnings || undefined));
   }
 
+  private async handleVerify(argument: string): Promise<void> {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("wait for the active operation before starting verification");
+      return;
+    }
+    const checkpoint = this.options.checkpoints.snapshot();
+    if (checkpoint.status !== "ready" || checkpoint.files.length === 0) {
+      this.pendingVerification = undefined;
+      this.addError("no tracked write/edit changes are available to verify");
+      return;
+    }
+    if (argument && argument !== "confirm") {
+      this.addError("usage: /verify [confirm]");
+      return;
+    }
+    if (argument !== "confirm") {
+      const suggestion = await discoverValidationSuggestion(this.options.cwd);
+      this.pendingVerification = suggestion;
+      if (!suggestion) {
+        this.transcript.addChild(new NoticeCard({
+          title: "VERIFY · NO SUGGESTION",
+          detail: "No supported validation entry was found in known project manifests.",
+          action: "Run the appropriate check yourself, or tell the Agent exactly which command to run.",
+          footer: "No model request · no command executed",
+          tone: colors.warning,
+        }));
+        return;
+      }
+      this.transcript.addChild(new NoticeCard({
+        title: "VERIFY READY",
+        detail: `${suggestion.command}\nsource=${suggestion.source} · ${suggestion.reason}`,
+        action: "Run /verify confirm to start one new paid Agent turn. Bash approval still applies.",
+        footer: "Preview only · no model request · no command executed",
+        tone: colors.ice,
+      }));
+      return;
+    }
+    const suggestion = this.pendingVerification;
+    if (!suggestion) {
+      this.addError("run /verify first to review the exact suggested command and cost warning");
+      return;
+    }
+    this.pendingVerification = undefined;
+    this.transcript.addChild(new Text(`${colors.accent("you")}  [verify] ${sanitizeError(suggestion.command)}`, 1, 0));
+    this.completionEvidence.reset();
+    this.cacheInspector.begin(this.session.getSessionStats());
+    this.resetTurnComponents();
+    this.updateStatus("running verification");
+    this.tui.requestRender();
+    void this.session.prompt(createVerificationPrompt(suggestion)).catch((error) => {
+      this.addProviderError(error);
+      this.updateStatus("idle");
+    });
+  }
+
   private async handleUndo(argument: string): Promise<void> {
     if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
       this.addError("cancel the active operation before undoing file changes");
@@ -1192,6 +1260,7 @@ export class InteractiveMode {
     }
     try {
       const result = await this.options.checkpoints.undo();
+      this.pendingVerification = undefined;
       this.transcript.addChild(new NoticeCard({
         title: "UNDO COMPLETE",
         detail: result.restoredFiles.join(", "),
