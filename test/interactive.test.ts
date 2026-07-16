@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -505,12 +506,23 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   await running;
 });
 
-test("renders streaming Bash cards and expands results without losing the command", async () => {
+test("renders streaming Bash cards and supports bounded output paging and search", async (context) => {
   const registry = createRegistry();
   const model = registry.find("deepseek", "deepseek-v4-flash");
   assert.ok(model);
   const session = new FakeSession(model);
   const terminal = new FakeTerminal();
+  const fullOutputPath = join(tmpdir(), `pi-bash-${randomBytes(8).toString("hex")}.log`);
+  const fullOutput = Array.from(
+    { length: 30 },
+    (_, index) => index === 16
+      ? "full-line-17 failure marker"
+      : index === 20
+        ? "DEEPSEEK_API_KEY=sk-full-output-secret"
+        : `full-line-${String(index + 1).padStart(2, "0")}`,
+  ).join("\n");
+  await writeFile(fullOutputPath, fullOutput);
+  context.after(() => rm(fullOutputPath, { force: true }));
   const mode = new InteractiveMode({
     session,
     modelRegistry: registry,
@@ -561,8 +573,8 @@ test("renders streaming Bash cards and expands results without losing the comman
           content: lines,
           truncated: true,
           truncatedBy: "lines",
-          totalLines: 2001,
-          totalBytes: 50001,
+          totalLines: 30,
+          totalBytes: fullOutput.length,
           outputLines: 20,
           outputBytes: lines.length,
           lastLinePartial: false,
@@ -570,7 +582,7 @@ test("renders streaming Bash cards and expands results without losing the comman
           maxLines: 2000,
           maxBytes: 51200,
         },
-        fullOutputPath: "/tmp/pi-bash-test.log",
+        fullOutputPath,
       },
     },
     isError: false,
@@ -578,7 +590,7 @@ test("renders streaming Bash cards and expands results without losing the comman
   await flush();
   const completedOutput = plainTerminalOutput(terminal);
   assert.match(completedOutput, /BASH · EXIT 0.*line-19.*line-20.*18 earlier lines/s);
-  assert.match(completedOutput, /truncated=lines · full=\/tmp\/pi-bash-test\.log/);
+  assert.match(completedOutput, /truncated=lines · full=.*pi-/);
   assert.match(completedOutput, /\/tool bash-stream- to expand/);
 
   terminal.output = "";
@@ -590,6 +602,35 @@ test("renders streaming Bash cards and expands results without losing the comman
   terminal.type("/tool bash-stream-");
   await flush();
   assert.match(plainTerminalOutput(terminal), /tool bash-stream- collapsed/);
+
+  terminal.output = "";
+  terminal.type("/tool bash-stream- page 2");
+  await flush();
+  const pageOutput = plainTerminalOutput(terminal);
+  assert.match(pageOutput, /TOOL OUTPUT · BASH · bash-stream-.*page=2\/3 · lines=30 · source=Pi temp file/s);
+  assert.match(pageOutput, /13 │ full-line-13.*24 │ full-line-24/s);
+
+  terminal.output = "";
+  terminal.type("/tool bash-stream- find failure marker");
+  await flush();
+  const searchOutput = plainTerminalOutput(terminal);
+  assert.match(searchOutput, /TOOL OUTPUT · BASH · bash-stream-.*query=failure marker · matches=1/s);
+  assert.match(searchOutput, /17 │ full-line-17 failure marker/);
+
+  terminal.columns = 100;
+  terminal.rows = 30;
+  terminal.output = "";
+  terminal.type("/tool bash-stream- find DEEPSEEK_API_KEY");
+  await flush();
+  const redactedSearch = plainTerminalOutput(terminal);
+  assert.match(redactedSearch, /21 │ DEEPSEEK_API_KEY=\[REDACTED\]/);
+  assert.doesNotMatch(redactedSearch, /sk-full-output-secret/);
+
+  terminal.output = "";
+  terminal.type("/tool page 4");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /tool output unavailable: page 4 exceeds 3/);
+  assert.deepEqual(session.prompts, []);
 
   session.emit({
     type: "tool_execution_end",

@@ -115,7 +115,7 @@ flowchart TB
 | 仓库探索 | read、ls、grep；受 cwd、realpath、symlink 和敏感路径保护 | `src/tool-policy.ts:96`、`:233`；`test/tool-policy.test.ts` | 可用；缺 find 依赖诊断 |
 | 修改与命令 | write/edit/bash 默认询问；审批 diff；本轮聚合 `/diff`；冲突安全 `/undo confirm`；Bash 精确授权 | `src/tool-policy.ts`；`src/checkpoints.ts` `TurnCheckpointManager`；`test/checkpoints.test.ts` | write/edit 可逆；Bash 副作用不覆盖 |
 | Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
-| 交互 TUI | 多轮、Markdown、折叠 thinking、可展开工具卡、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`、`ToolActivityCard`；`src/autocomplete.ts`；`test/interactive.test.ts` | 日用可用；缺结果搜索 |
+| 交互 TUI | 多轮、Markdown、折叠 thinking、可展开工具卡、长结果分页/搜索、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`、`ToolActivityCard`；`src/tool-output.ts`；`src/autocomplete.ts`；对应测试 | 日用可用；日志查看仍是命令式入口 |
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；未知项目先过滤，TUI 可临时/永久信任并 reload | `src/context-resources.ts`；`src/project-trust.ts`；`test/context-resources.test.ts` | 稳定；Extension 仍禁用 |
 | 本地设置 | 私有 JSON 保存模型、thinking、mode、approval、reasoning 展示；CLI 显式值优先，损坏时安全回退且不覆盖 | `src/product-settings.ts`；`test/product-settings.test.ts` | 日用核心偏好可用 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；Pi 选择器支持会话热切换和树导航，仍限制当前 cwd | `src/sessions.ts` `createSessionControls()`；`src/interactive.ts` `showSessions()`、`handleTree()`；对应 Session/TUI 测试 | 机制与主要交互完整 |
@@ -124,7 +124,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 93 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、命名验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 98 项，覆盖纯函数、替身 Session、临时目录工具、80×24/100×30 TUI、流式/截断/失败工具卡、结果分页/搜索/取消、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、命名验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -139,9 +139,9 @@ flowchart TB
 
 ### 5.2 仍然会造成日常摩擦
 
-1. **工具结果缺少搜索**：卡片可展开 tail 并能定位 Pi 完整输出文件，但还不能在 TUI 内搜索长日志。
-2. **验证选择仍需人工判断**：项目可声明多个命令，但产品不会根据本轮修改文件自动猜测最相关的一条。
-3. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+1. **验证选择仍需人工判断**：项目可声明多个命令，但产品不会根据本轮修改文件自动猜测最相关的一条。
+2. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+3. **语义化代码导航有限**：仓库理解仍主要依赖 read/ls/grep，尚未加入编译器 diagnostics 或 LSP。
 
 ## 6. 外部产品带来的设计启发
 
@@ -342,11 +342,12 @@ flowchart TB
 - 产品层 `ToolActivityCard` 直接消费 Pi `tool_execution_start/update/end`；Runtime、执行、取消和结果裁剪仍归 Pi。
 - start 参数独立保存，update 分别读取事件 args 与 partial result，避免流式 Bash 把 `$ command` 覆盖成结果对象。
 - 默认显示参数摘要、cwd、持续时间和两行 tail；`/tool [id-prefix]` 展开到八行参数、十六行结果并可再次折叠。
+- `/tool [id] page <n>` 显示 12 行带行号页面，`/tool [id] find <text>` 做普通子串搜索并最多展示 10 条命中；两者均为本地零请求操作。
 - Bash 成功显示 `EXIT 0`，并分别识别 `Command exited with code N`、`Command timed out after...` 和 `Command aborted`。
-- 读取 Pi `BashToolDetails` 展示 `truncatedBy` 与 `fullOutputPath`；不复制 Pi 的 PTY、`OutputAccumulator` 或临时文件逻辑。
-- 所有参数与结果在渲染前继续走统一敏感值遮蔽；80×24 替身覆盖流式、长输出、截断、超时、取消和 ID 前缀交互。
+- 读取 Pi `BashToolDetails` 展示 `truncatedBy` 与 `fullOutputPath`；截断结果只流式读取受限 `pi-bash` 临时普通文件，不复制 Pi 的 PTY、`OutputAccumulator` 或临时文件逻辑。
+- 所有参数与结果在渲染前继续走统一敏感值遮蔽；80×24/100×30 替身覆盖流式、长输出、截断、分页、搜索、超时、取消和 ID 前缀交互。
 
-边界：展开的是有界 tail，不把完整日志载入 TUI；完整输出使用 Pi 提供的本机路径。详见 `docs/tool-result-cards.md`。
+边界：查看器不建立索引，单次分页只保留 12 行，搜索只保留 10 条；Pi 临时文件可能被系统清理，恢复 Session 不重建旧卡片。详见 `docs/tool-result-cards.md`。
 
 ### P1-C：DeepSeek Prompt 与显式工作档位
 
@@ -462,6 +463,12 @@ Flash/high、Flash/max、Pro/max 工作档位继续暂缓；下一次 Prompt 迭
 成功标准：项目可以声明多个本地验证入口；信任前不读取命令；列表和预览不产生请求；无效配置、越界路径和失效信任不能静默执行。
 
 完成证据：`.deepseek-code/validation.json`、Trust/Resources 双门、名称/数量/长度校验、symlink 工作区边界、`/verify <name>` 列表与确认已落地；93/93 自动化、完整构建、真实仓库配置解析和离线 Doctor 均通过。
+
+### Iteration 8：长工具结果分页与搜索（已完成）
+
+成功标准：用户无需离开 TUI 即可定位长输出；不复制 Pi 执行/截断逻辑；临时文件读取有明确来源、大小与 symlink 边界；任何查看操作都不增加模型请求。
+
+完成证据：`/tool [id] page <n>`、`/tool [id] find <text>`、12 行页、10 条搜索结果、独立取消、`O_NOFOLLOW` Pi 临时日志读取与统一脱敏已落地；98/98 自动化覆盖 80×24、100×30、越界和敏感输出。
 
 ## 12. 每次迭代的完成门槛
 

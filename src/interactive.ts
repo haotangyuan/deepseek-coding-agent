@@ -55,6 +55,14 @@ import {
   discoverValidationSuggestions,
   type ValidationSuggestion,
 } from "./validation-suggestions.ts";
+import {
+  parseToolOutputCommand,
+  readToolOutputPage,
+  searchToolOutput,
+  type ToolOutputPage,
+  type ToolOutputSearch,
+  type ToolOutputSource,
+} from "./tool-output.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type ThinkingLevel = AgentSession["thinkingLevel"];
@@ -189,7 +197,7 @@ function toolResultText(result: { content?: Array<{ type: string; text?: string 
     .map((item: { text?: string }) => item.text ?? "")
     .join("\n");
   const safe = sanitizeError(content).trim();
-  return safe.length <= 12000 ? safe : `${safe.slice(0, 12000)}\n...[display truncated]`;
+  return safe.length <= 64 * 1024 ? safe : `${safe.slice(0, 64 * 1024)}\n...[display truncated]`;
 }
 
 export function parseInteractiveCommand(input: string): InteractiveCommand | undefined {
@@ -308,6 +316,50 @@ class TurnDiffCard implements Component {
   }
 }
 
+class ToolOutputViewCard implements Component {
+  private readonly toolName: string;
+  private readonly toolId: string;
+  private readonly view: ToolOutputPage | ToolOutputSearch;
+
+  constructor(toolName: string, toolId: string, view: ToolOutputPage | ToolOutputSearch) {
+    this.toolName = toolName;
+    this.toolId = toolId;
+    this.view = view;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const available = Math.max(1, width);
+    const bodyWidth = Math.max(1, available - 4);
+    const isPage = "lines" in this.view;
+    const items = isPage ? this.view.lines : this.view.matches;
+    const source = this.view.source === "pi-bash-temp" ? "Pi temp file" : "event result";
+    const summary = isPage
+      ? `page=${this.view.page}/${this.view.totalPages} · lines=${this.view.totalLines} · source=${source}`
+      : `query=${sanitizeError(this.view.query)} · matches=${this.view.totalMatches} · source=${source}`;
+    const numberWidth = Math.max(1, String(items.at(-1)?.number ?? 0).length);
+    const lines = [
+      colors.ice(truncateToWidth(`╭─ TOOL OUTPUT · ${this.toolName.toUpperCase()} · ${this.toolId.slice(0, 12)}`, available)),
+      colors.dim(truncateToWidth(`│ ${summary}`, available)),
+    ];
+    for (const item of items) {
+      const prefix = `${String(item.number).padStart(numberWidth, " ")} │ `;
+      const text = truncateToWidth(sanitizeError(item.text), Math.max(1, bodyWidth - prefix.length));
+      lines.push(truncateToWidth(`│ ${colors.accent(prefix)}${isPage ? text : colors.warning(text)}`, available));
+    }
+    if (items.length === 0) lines.push(colors.dim(truncateToWidth(`│ ${isPage ? "No output lines" : "No matching lines"}`, available)));
+    if (!isPage && this.view.limited) {
+      lines.push(colors.dim(truncateToWidth(`│ … ${this.view.totalMatches - this.view.matches.length} more matches`, available)));
+    }
+    lines.push(colors.ice(truncateToWidth(
+      `╰─ /tool ${this.toolId.slice(0, 12)} page <n> · /tool ${this.toolId.slice(0, 12)} find <text>`,
+      available,
+    )));
+    return lines;
+  }
+}
+
 type ToolCardStatus = "running" | "done" | "failed" | "timeout" | "cancelled";
 
 class ToolActivityCard implements Component {
@@ -355,6 +407,21 @@ class ToolActivityCard implements Component {
   toggleExpanded(): boolean {
     this.expanded = !this.expanded;
     return this.expanded;
+  }
+
+  outputSnapshot(): { name: string; source: ToolOutputSource; running: boolean } {
+    if (this.details?.truncation?.truncated && !this.details.fullOutputPath) {
+      throw new Error("Pi truncated this result but its full output file is unavailable; use /tool to inspect the retained tail");
+    }
+    return {
+      name: this.name,
+      source: {
+        inline: this.output,
+        fullOutputPath: this.details?.truncation?.truncated ? this.details.fullOutputPath : undefined,
+        totalLines: this.details?.truncation?.totalLines,
+      },
+      running: this.status === "running",
+    };
   }
 
   invalidate(): void {}
@@ -481,6 +548,7 @@ export class InteractiveMode {
   private unsubscribe: (() => void) | undefined;
   private nextSessionSelection: SessionSelection | undefined;
   private pendingVerification: ValidationSuggestion | undefined;
+  private toolOutputAbort: AbortController | undefined;
   private pendingProjectTrust = false;
   private projectTrustStatus: ProductProjectTrustSnapshot["status"];
 
@@ -689,7 +757,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /settings [approval value] /trust [once|always|off|deny] /cache /diff /verify [name|confirm] /tool [id] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /settings [approval value] /trust [once|always|off|deny] /cache /diff /verify [name|confirm] /tool [id] [page n|find text] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -706,7 +774,7 @@ export class InteractiveMode {
     } else if (command.name === "verify") {
       await this.handleVerify(command.argument);
     } else if (command.name === "tool") {
-      this.handleToolCommand(command.argument);
+      await this.handleToolCommand(command.argument);
     } else if (command.name === "undo") {
       await this.handleUndo(command.argument);
     } else if (command.name === "session") {
@@ -1249,6 +1317,12 @@ export class InteractiveMode {
       this.updateStatus("running");
       return;
     }
+    if (this.toolOutputAbort) {
+      this.toolOutputAbort.abort();
+      this.addSystem("tool output view cancellation requested");
+      this.updateStatus("cancelling tool output view");
+      return;
+    }
     if (this.options.sessionControls.snapshot().compacting) {
       this.options.sessionControls.abortCompaction();
       this.addSystem("compaction cancellation requested");
@@ -1451,10 +1525,17 @@ export class InteractiveMode {
     this.transcript.addChild(new TurnDiffCard(diff.files, diff.patch, warnings || undefined));
   }
 
-  private handleToolCommand(argument: string): void {
-    const target = argument || this.latestToolId;
+  private async handleToolCommand(argument: string): Promise<void> {
+    let command;
+    try {
+      command = parseToolOutputCommand(argument);
+    } catch (error) {
+      this.addError(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    const target = command.target || this.latestToolId;
     if (!target) {
-      this.addError("no tool result is available to expand");
+      this.addError("no tool result is available");
       return;
     }
     const matches = [...this.toolCards.entries()].filter(([id]) => id === target || id.startsWith(target));
@@ -1467,9 +1548,42 @@ export class InteractiveMode {
       return;
     }
     const [id, card] = matches[0]!;
-    const expanded = card.toggleExpanded();
     this.latestToolId = id;
-    this.addSystem(`tool ${id.slice(0, 12)} ${expanded ? "expanded" : "collapsed"}`);
+    if (command.action === "toggle") {
+      const expanded = card.toggleExpanded();
+      this.addSystem(`tool ${id.slice(0, 12)} ${expanded ? "expanded" : "collapsed"}`);
+      return;
+    }
+
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("wait for the active Agent or compaction before paging or searching tool output");
+      return;
+    }
+    if (this.toolOutputAbort) {
+      this.addError("another tool output view is still loading");
+      return;
+    }
+
+    const abort = new AbortController();
+    this.toolOutputAbort = abort;
+    let snapshot;
+    try {
+      snapshot = card.outputSnapshot();
+      if (snapshot.running) throw new Error("wait for the tool to finish before paging or searching its output");
+      this.updateStatus(command.action === "page" ? "loading tool output" : "searching tool output");
+      const view = command.action === "page"
+        ? await readToolOutputPage(snapshot.source, command.page, abort.signal)
+        : await searchToolOutput(snapshot.source, command.query, abort.signal);
+      this.transcript.addChild(new ToolOutputViewCard(snapshot.name, id, view));
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        this.addSystem("tool output view cancelled; Session remains ready");
+      } else {
+        this.addError(`tool output unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } finally {
+      if (this.toolOutputAbort === abort) this.toolOutputAbort = undefined;
+    }
   }
 
   private async handleVerify(argument: string): Promise<void> {
@@ -1612,6 +1726,7 @@ export class InteractiveMode {
   private async exit(): Promise<void> {
     if (this.exiting) return;
     this.exiting = true;
+    this.toolOutputAbort?.abort();
     if (this.options.sessionControls.snapshot().compacting) this.options.sessionControls.abortCompaction();
     if (this.session.isStreaming) await this.session.abort();
     if (!this.session.isIdle) await this.session.waitForIdle();

@@ -86,7 +86,7 @@ npm start
 /cache
 /diff
 /verify [name|confirm]
-/tool [tool-call-id]
+/tool [tool-call-id] [page n|find text]
 /undo [confirm]
 /session
 /sessions [list]
@@ -112,7 +112,7 @@ npm start
 
 Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steering 排队；Ctrl+C 取消当前运行，空闲时连续两次 Ctrl+C 退出。reasoning 默认只显示长度，通过 `/reasoning` 展开或重新折叠。
 
-工具调用使用宽度感知卡片原地更新：默认保留命令、cwd、持续时间、退出状态和最后两行输出；`/tool` 展开或折叠最近一次工具结果，`/tool <id-prefix>` 可定位指定卡片。Bash 的非零退出、超时和取消分别显示，Pi 已截断的结果会给出截断方式和本机完整输出路径；展示内容继续经过敏感值遮蔽。详细设计见 [docs/tool-result-cards.md](docs/tool-result-cards.md)。
+工具调用使用宽度感知卡片原地更新：默认保留命令、cwd、持续时间、退出状态和最后两行输出；`/tool` 展开或折叠最近一次工具结果，`/tool <id-prefix>` 可定位指定卡片。`/tool page [n]` 和 `/tool <id-prefix> page [n]` 每页显示 12 行带行号结果；`/tool find <text>` 可做大小写不敏感的纯文本搜索，最多展示 10 条命中且不产生模型请求。Bash 的非零退出、超时和取消分别显示；对 Pi 已截断的结果，查看器只流式读取系统临时目录中经过名称、普通文件、symlink 和 100 MiB 上限检查的 `pi-bash-*.log`，展示内容继续经过敏感值遮蔽。查看期间状态栏显示 loading/searching，Ctrl+C 只取消本次查看并保留 Session。详细设计见 [docs/tool-result-cards.md](docs/tool-result-cards.md)。
 
 `/diff` 展示最近一个包含 Pi write/edit 的 Agent 轮次，而不是整个 Git 工作区的混合差异。`/undo` 先显示恢复范围，只有 `/undo confirm` 才写入磁盘；如果文件在 Agent 完成后又被用户或其他进程修改，整次撤销会被拒绝。Bash 副作用不在自动撤销范围内。详细边界见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)。
 
