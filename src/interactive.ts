@@ -6,6 +6,7 @@ import {
   type SessionStats,
 } from "@earendil-works/pi-coding-agent";
 import {
+  type AutocompleteProvider,
   type Component,
   Container,
   Editor,
@@ -23,6 +24,7 @@ import {
 import { relative } from "node:path";
 import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
 import { CacheInspector, formatCacheReport, type CacheReport } from "./cache-inspector.ts";
+import { createInteractiveAutocompleteProvider } from "./autocomplete.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
@@ -274,6 +276,10 @@ class InteractiveEditor extends Container {
     this.editor.addToHistory(this.editor.getExpandedText());
     this.editor.setText("");
   }
+
+  setAutocompleteProvider(provider: AutocompleteProvider): void {
+    this.editor.setAutocompleteProvider(provider);
+  }
 }
 
 export class InteractiveMode {
@@ -312,12 +318,19 @@ export class InteractiveMode {
     this.tui = new TUI(options.terminal ?? new ProcessTerminal());
     this.status = new StatusLine("");
     this.editor = new InteractiveEditor(this.tui, (text) => void this.handleSubmit(text), () => void this.handleCtrlC());
+    this.editor.setAutocompleteProvider(createInteractiveAutocompleteProvider({
+      cwd: options.cwd,
+      modelRegistry: options.modelRegistry,
+      getThinkingLevels: () => options.session.getAvailableThinkingLevels(),
+      getContextSnapshot: options.getContextSnapshot,
+      sessionControls: options.sessionControls,
+    }));
     this.header = new Text("", 1, 0);
     this.subheader = new Text("", 1, 0);
 
     this.tui.addChild(this.header);
     this.tui.addChild(this.subheader);
-    this.tui.addChild(new Text(colors.dim("Enter submit · Shift+Enter newline · Ctrl+C cancel/exit · /help commands"), 1, 0));
+    this.tui.addChild(new Text(colors.dim("Enter send · / commands · @ files · Tab complete · Ctrl+C cancel/exit"), 1, 0));
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.status);
     this.tui.addChild(this.editor);

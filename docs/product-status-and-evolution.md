@@ -2,7 +2,7 @@
 
 > 文档性质：当前产品事实、体验判断与下一阶段实施顺序的主入口
 > 最近核对：2026-07-16
-> 项目提交基线：`b0750de88279df16db908c9261bbd9160da5fb6c`
+> 项目提交基线：`d8ed1f5dee71fc2a309b0013a12729a15da73961`
 > Pi 本地研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > Pi 上游观察点：`5220aba6`，相对本地研究基线前进 13 个提交，但未合并到本地
 > 当前项目依赖：`@earendil-works/pi-coding-agent@0.80.7`、`@earendil-works/pi-tui@0.80.7`
@@ -115,7 +115,7 @@ flowchart TB
 | 仓库探索 | read、ls、grep；受 cwd、realpath、symlink 和敏感路径保护 | `src/tool-policy.ts:96`、`:233`；`test/tool-policy.test.ts` | 可用；缺 find 依赖诊断 |
 | 修改与命令 | write/edit/bash 默认询问；diff 预览；危险命令阻断；Bash 可按完全相同命令在进程内授权 | `src/tool-policy.ts:134`、`:147`、`:197`、`:239` | 可用；缺本轮撤销 |
 | Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
-| 交互 TUI | 多轮、Markdown、折叠 thinking、工具卡、审批、steering、取消、恢复卡和状态栏 | `src/interactive.ts:279` `InteractiveMode`；`:837` `handleEvent()`；`test/interactive.test.ts` | 可用；导航效率不足 |
+| 交互 TUI | 多轮、Markdown、折叠 thinking、工具卡、审批、steering、取消、恢复卡、状态栏，以及动态命令/参数/资源/安全文件补全 | `src/interactive.ts` `InteractiveMode`；`src/autocomplete.ts` `createInteractiveAutocompleteProvider()`；`test/interactive.test.ts`、`test/autocomplete.test.ts` | 可用；Session/Tree 仍缺选择器 |
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；可临时过滤项目资源并 reload | `src/context-resources.ts:61`、`:92`；`test/context-resources.test.ts` | 稳定；缺启动信任选择 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；限制当前 cwd | `src/sessions.ts:78`、`:130`；`test/sessions.test.ts` | 机制完整；交互入口粗糙 |
 | Completion Evidence | 记录修改、diff 查看、识别出的验证命令和未解决错误，不偷偷追加模型请求 | `src/completion-evidence.ts:77`；`test/completion-evidence.test.ts` | 观察型可用；未形成闭环 |
@@ -123,7 +123,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 60 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、SessionManager、Doctor 和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 62 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -139,14 +139,13 @@ flowchart TB
 ### 5.2 仍然会造成日常摩擦
 
 1. **启动缺少集中诊断**：Node、Git、rg、可选 fd、API 凭据、模型、终端能力和工作区状态分散在不同错误里。
-2. **输入发现性较弱**：已经有很多 slash command，但 Editor 没接命令和文件自动补全。
-3. **Session 能恢复但难选择**：有 `/sessions` 文本列表和 ID 恢复，没有交互选择器。
-4. **能预览修改但不能可靠撤销本轮修改**：用户拒绝前安全，批准后主要依赖 Git 手工恢复。
-5. **Evidence 只提醒，不帮助完成下一步**：发现“改了但未验证”后，仍需用户自己重新输入指令。
-6. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
-7. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
-8. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
-9. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+2. **Session 能恢复但难选择**：有 `/sessions` 文本列表、ID 补全和恢复，没有交互选择器。
+3. **能预览修改但不能可靠撤销本轮修改**：用户拒绝前安全，批准后主要依赖 Git 手工恢复。
+4. **Evidence 只提醒，不帮助完成下一步**：发现“改了但未验证”后，仍需用户自己重新输入指令。
+5. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
+6. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
+7. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
+8. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
 
 ## 6. 外部产品带来的设计启发
 
@@ -221,6 +220,8 @@ flowchart TB
 
 ### P0-B：TUI 导航与输入效率
 
+状态：**进行中；输入补全已完成（2026-07-16），选择器与工具卡折叠待完成。**
+
 目标：减少记命令、复制路径和手输 Session ID 的摩擦。
 
 功能：
@@ -232,6 +233,14 @@ flowchart TB
 - `/tree` 使用 Pi `TreeSelectorComponent`，保留文本命令作为脚本入口。
 - `/model` 使用 DeepSeek-only 选择器；非 DeepSeek 模型不进入候选列表。
 - 工具卡默认显示摘要，可展开完整的已脱敏参数和截断结果。
+
+已交付：
+
+- 基于 Pi `Editor` 和 `CombinedAutocompleteProvider` 接入 `/` 命令面，候选说明沿用深海蓝/冰青语义色与差分刷新。
+- 命令集合由本项目动态生成；Skill、Prompt Template 会读取当前资源快照，资源 reload 后不保留陈旧候选。
+- `/model` 只返回已认证的 DeepSeek 模型；`/thinking`、`/mode`、`/resources`、`/tree`、`/fork` 提供真实参数候选。
+- `@` 在无 fd 时仍提供当前路径补全；所有文件候选限制在工作区，过滤 `.env`、凭据、私钥和敏感目录，并检查符号链接真实路径。
+- 80×24 TUI 测试确认候选列表可见；独立测试覆盖资源、模型、树节点、工作区边界和敏感路径。
 
 验收：
 

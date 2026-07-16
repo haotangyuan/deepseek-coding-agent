@@ -460,7 +460,8 @@ npm test
 | Done | M5 Session/Compaction | 已完成持久化、恢复、树和压缩命令 |
 | Done | M4 上下文透明化 | 已完成真实资源可见性与临时过滤 |
 | Done | Doctor 与 Pi 兼容门 | 已完成离线诊断、降级提示和深海蓝/冰青双模式输出 |
-| P0 | TUI 导航、Diff 与 Undo | 直接降低日常输入、审阅和误修改恢复成本 |
+| Done | TUI 命令与安全文件补全 | 已完成动态命令、DeepSeek 模型、资源、树节点和工作区文件补全 |
+| P0 | Session/Tree 选择器、Diff 与 Undo | 继续降低会话导航、审阅和误修改恢复成本 |
 | P1 | 显式验证闭环与 DeepSeek 优化 | 在可逆修改基础上提升完成率、缓存和成本表现 |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
@@ -521,9 +522,11 @@ npm test
 | D-034 | 竞品只作为设计参考，不建设其他 Agent 适配器或排行榜 | 已采纳 | 开发资源集中于 DeepSeek Coding Agent 自身的体验、可靠性和可量化迭代 |
 | D-035 | 本地日用体验优先于新增能力数量和面试展示 | 已采纳 | Doctor、导航、Diff/Undo 和验证闭环比 MCP、多 Agent 或更多工具更直接改善真实使用 |
 | D-036 | UI 视觉、交互和动态效果作为每个功能的验收条件 | 已采纳 | 统一语义色和宽度适配；动态只表达真实状态，不能用装饰性动画掩盖延迟 |
+| D-037 | TUI 补全复用 Pi Editor/CombinedAutocompleteProvider，并在产品层动态组装和安全过滤 | 已采纳 | 保持 Pi 差分渲染与键盘体验；只显示 DeepSeek 模型，文件候选限制在工作区并隐藏敏感路径 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成 TUI 输入补全。`/` 动态展示本项目命令、Skill 和 Prompt Template；模型、thinking、mode、resources、tree/fork 参数可补全；`@` 和 Tab 文件候选限制在工作区并过滤敏感路径。80×24 渲染路径和纯函数测试纳入 62/62 自动化验证。
 - **2026-07-16：** 完成 Doctor 与 Pi 兼容门。新增离线 `--doctor`、模型/凭据存在性、Git、rg/fd、Session、TTY 和资源诊断；TTY 使用深海蓝/冰青语义色，纯文本自动降级，60/60 自动化与本机 TTY/non-TTY smoke 通过。
 - **2026-07-16：** 收敛当前能力并重排后续优先级。新增 `product-status-and-evolution.md`，近期按 Doctor/兼容门、TUI 导航、本轮 Diff/Undo、显式验证闭环推进；记录 Pi 上游 model runtime 重构风险，不盲目依赖未发布 `main`。
 - **2026-07-16：** 收紧产品边界：删除跨 Agent 导入与比较入口；Claude Code、Codex CLI、OpenCode 只作为设计参考，评测专注本项目自身版本、prompt、工具和模型策略迭代。

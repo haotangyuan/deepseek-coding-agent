@@ -70,7 +70,7 @@ async function findExistingAncestor(path: string): Promise<string> {
   }
 }
 
-function sensitivePathLabel(path: string): string | undefined {
+export function sensitivePathLabel(path: string): string | undefined {
   const parts = path.replaceAll("\\", "/").split("/").filter((part) => part !== "" && part !== ".");
   const normalized = parts.map((part) => part.toLowerCase());
   const directory = normalized.find((part) => SENSITIVE_DIRECTORIES.has(part));

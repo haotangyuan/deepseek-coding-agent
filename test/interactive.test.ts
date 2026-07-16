@@ -50,6 +50,10 @@ class FakeTerminal implements Terminal {
     this.input?.("\r");
   }
 
+  send(data: string): void {
+    this.input?.(data);
+  }
+
   ctrlC(): void {
     this.input?.("\x03");
   }
@@ -276,6 +280,15 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   });
   const running = mode.run();
   await flush();
+
+  terminal.send("/mo");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /model.*Select a DeepSeek model/s);
+  assert.match(plainTerminalOutput(terminal), /mode.*Switch agent capability boundary/s);
+  terminal.send("\x1b");
+  terminal.send("\x7f");
+  terminal.send("\x7f");
+  terminal.send("\x7f");
 
   terminal.type("first");
   await flush();
