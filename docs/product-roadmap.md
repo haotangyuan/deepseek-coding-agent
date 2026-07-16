@@ -332,7 +332,7 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、中立结果比较、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、Cache Inspector、Plan/Build、敏感路径保护和进程内精确 Bash 授权已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只比较各 Agent 共有样本，不伪造竞品成绩。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md` 和 `docs/session-approvals.md`。
+当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、Cache Inspector、Plan/Build、敏感路径保护和进程内精确 Bash 授权已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md` 和 `docs/session-approvals.md`。
 
 实验方向：
 
@@ -356,7 +356,7 @@ flowchart TB
 
 目标：让项目不仅“能运行”，还能够稳定证明设计价值。
 
-产品参考边界：借鉴 Claude Code 的预算、工具 allow/deny 和计划/执行分层，以及 Codex CLI 的非交互 exec、结构化输出、ephemeral 与 workspace 隔离理念。当前已落地临时工作区、最小工具授权、Schema v3 NDJSON、按任务聚合、中立结果导入、观测成本上限和产品级 Plan/Build；比较器只消费真实适配结果并限制为共同样本。OS 级 sandbox 仍需独立设计，不在评测脚本中伪实现。
+产品参考边界：可以研究 Claude Code、Codex CLI 和 OpenCode 的交互与工程取舍，但只把适合本项目的能力实现到 DeepSeek Coding Agent 中，不适配或包装这些 Agent。当前已落地临时工作区、最小工具授权、Schema v3 NDJSON、按任务聚合、观测成本上限和产品级 Plan/Build。OS 级 sandbox 仍需独立设计，不在评测脚本中伪实现。
 
 固定演示场景：
 
@@ -504,11 +504,12 @@ npm test
 | D-031 | Plan/Build 与审批模式保持正交且不持久化 | 已采纳 | Plan 通过活动工具与策略钩子双重只读；Build 不绕过审批，resume 由当前启动参数决定 |
 | D-032 | 敏感路径默认拒绝，公开配置模板显式放行 | 已采纳 | 优先防止凭据进入模型上下文；保留 `.env.example/.sample/.template` 的正常开发流程，不夸大 Bash 字面量检测 |
 | D-033 | Session Bash 授权只匹配完整命令且不持久化 | 已采纳 | 降低重复审批摩擦，同时避免通配符误放行、跨会话陈旧授权和修改工具批量授权 |
-| D-034 | 跨 Agent 评测只比较共同 task/run，缺失指标不猜测 | 已采纳 | 防止任务集合和观测能力差异产生虚假排名；竞品结果必须由真实适配器导入 |
+| D-034 | 竞品只作为设计参考，不建设其他 Agent 适配器或排行榜 | 已采纳 | 开发资源集中于 DeepSeek Coding Agent 自身的体验、可靠性和可量化迭代 |
 
 ### 更新日志
 
-- **2026-07-16：** 完成评测 Schema v3。逻辑样本累计多轮 repair 延迟/工具/Provider 指标，汇总新增按任务通过率、P50/P95、成本与错误率；增加配置解析异质任务和共同样本比较器，57/57 自动化测试与真实 Flash repair-config Smoke 通过。
+- **2026-07-16：** 收紧产品边界：删除跨 Agent 导入与比较入口；Claude Code、Codex CLI、OpenCode 只作为设计参考，评测专注本项目自身版本、prompt、工具和模型策略迭代。
+- **2026-07-16：** 完成评测 Schema v3。逻辑样本累计多轮 repair 延迟/工具/Provider 指标，汇总新增按任务通过率、P50/P95、成本与错误率；增加配置解析异质任务，56/56 自动化测试与真实 Flash repair-config Smoke 通过。
 - **2026-07-16：** 完成进程内精确 Bash 授权。审批支持 allow-once / allow-session / deny；仅完全相同命令复用，危险/敏感检查不可绕过，55/55 自动化测试与真实 Flash 非 TTY 拒绝 Smoke 通过。
 - **2026-07-16：** 完成敏感路径规则。文件工具默认拒绝 `.env`、常见凭据目录/文件和 SSH 私钥名，公开模板放行；明显 Bash 路径引用在审批前阻断，54/54 自动化测试与真实 Flash 拒绝 Smoke 通过。
 - **2026-07-16：** 完成 Plan/Build。CLI `--mode` 与 TUI `/mode` 通过 Pi 动态工具 API 切换只读/可修改集合，Plan 对直接修改调用保留策略二次阻断；52/52 自动化测试与真实 Flash 只读 Smoke 通过。

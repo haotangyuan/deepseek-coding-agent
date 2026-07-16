@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import type { EvaluationMetrics } from "./evaluation.ts";
 import { DEFAULT_MODEL_ID, sanitizeError, THINKING_LEVELS, type DeepSeekThinkingLevel } from "./cli.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
-import { summarizeEvalTasks, type ComparableEvalResult, type EvalTaskKind, type EvalTaskPlan, type EvalTaskSummary } from "./eval-report.ts";
+import { summarizeEvalTasks, type EvalSampleResult, type EvalTaskKind, type EvalTaskPlan, type EvalTaskSummary } from "./eval-report.ts";
 import { runCli } from "./main.ts";
 
 interface EvalTask {
@@ -38,7 +38,7 @@ export interface RepairFixture {
   protectedFiles: string[];
 }
 
-interface EvalResult extends ComparableEvalResult, Record<string, unknown> {
+interface EvalResult extends EvalSampleResult, Record<string, unknown> {
   metrics?: EvaluationMetrics;
 }
 
@@ -554,7 +554,7 @@ async function executeTask(options: EvalOptions, task: EvalTask, run: number, av
 
 export function summarizeEval(
   plans: ReadonlyArray<EvalTaskPlan>,
-  results: ReadonlyArray<ComparableEvalResult>,
+  results: ReadonlyArray<EvalSampleResult>,
   maxCostUsd: number,
   maxProviderRequests: number = plans.reduce((total, plan) => total + plan.plannedSamples, 0),
 ): EvalSummary {

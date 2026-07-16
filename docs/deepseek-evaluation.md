@@ -71,26 +71,9 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking max --run
 npm run eval -- --live --task all --model deepseek-v4-pro --thinking high --runs 3
 ```
 
-保存结果并比较两个已经执行完成、且归一化到 Schema v3 的 Agent 结果：
-
-```bash
-npm run eval -- --live --task all --runs 3 > results/deepseek-code.ndjson
-npm run eval:compare -- results/deepseek-code.ndjson results/claude-code.ndjson
-```
-
 `--runs` 限制为 1–5。Pro 必须显式选择，不存在自动升级。建议先 dry-run 检查 `sampleCount`、`maxProviderRequests` 和 `maxCostUsd`，再决定是否付费执行。默认上限为 0.02 美元；累计已知成本达到上限后不再开始下一次请求，最终超过上限则汇总失败。由于真实成本只能在一次请求完成并返回 usage 后计算，这是一条请求间的观测边界，不是 Provider 侧预授权的硬预算。
 
 输出协议固定为 NDJSON。Schema v3 的 dry-run 只有一条 `eval_plan`，其中 `sampleCount` 是逻辑样本数，`maxProviderRequests` 是包含最多一次反馈修复后的调用上限；真实执行每个样本一条 `eval_result`，最后一条 `eval_summary`。每条结果都带固定 fixture 版本 `suite=deepseek-code-v1`、`agent`、`taskKind`，并在顶层累计整个逻辑样本的 `durationMs`、`costUsd`、`toolCalls`、`toolErrors`、`providerErrors` 和 `attemptCount`；因此两轮 repair 不会只统计最后一轮。汇总的 `tasks` 按任务报告通过率、平均/P50/P95 延迟、平均/总成本、工具错误率与 Provider 请求数。repair 结果仍保留每次尝试的短输出和测试状态，但不记录完整 reasoning、工具结果、隐藏测试或凭据。
-
-### 3.1 中立导入与比较格式
-
-`npm run eval:compare` 不启动任何 Agent，只读取一个或多个 NDJSON 文件中的 Schema v3 `eval_result`。Claude Code、OpenCode 或其他实现需要由各自的适配器输出以下最小字段；缺少原生观测能力的可选指标应省略，禁止填入猜测值：
-
-```json
-{"type":"eval_result","schemaVersion":3,"suite":"deepseek-code-v1","agent":"claude-code","task":"exact","taskKind":"protocol","run":1,"model":"deepseek-v4-flash","thinking":"high","passed":true,"durationMs":1234,"costUsd":0.001,"toolCalls":0,"toolErrors":0,"providerErrors":0,"attemptCount":1}
-```
-
-比较器要求所有输入使用同一个 `suite`，再按 `agent + model + thinking` 分组，并只使用所有分组都存在的 `task + run` 交集；额外样本进入 `excludedSamples`，不会提高或降低总分。重复的同组样本、不同 suite、旧 Schema、负数指标或没有共同样本会直接报错。公平对比还必须固定任务 fixture、判定器、模型 ID、thinking 语义、运行次数和执行环境；若不同 Agent 无法表达相同 thinking 档位，应分开报告，不能强行合并。
 
 一次性 CLI 也可单独输出指标：
 
@@ -201,7 +184,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 - 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
 - 将 `repair-js`、`repair-multi-file` 也各重复至少 3 次，形成无反馈/多文件/反馈恢复三组基线。
-- 为 Claude Code/OpenCode 编写独立适配脚本并在同一 fixture 上真实运行；在此之前只验证格式，不展示虚构竞品分数。
+- 扩充本项目自己的异质任务和重复样本，用同一 suite 比较 prompt、工具、thinking 与模型策略迭代前后的变化。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。
 - 只有在普通 Schema 失败样本足够明确后，再在 playground 研究 strict tool mode。

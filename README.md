@@ -192,10 +192,9 @@ npm test
 npm run build
 npm run eval -- --task all --model deepseek-v4-flash --thinking high
 npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --runs 1 --max-cost-usd 0.02
-npm run eval:compare -- results/deepseek-code.ndjson results/claude-code.ndjson
 ```
 
-`--runs` 最多 5 次；默认观测成本上限为 0.02 美元，达到上限后不会开始下一次请求。单次请求的最终成本只能在 Provider 返回 usage 后得知，因此该参数不是预付费硬限额；超过上限会在汇总中标记失败。Pro 必须用 `--model deepseek-v4-pro` 显式选择。Schema v3 的 dry-run 同时显示逻辑样本数和最大 Provider 请求数；真实执行每个样本输出 `eval_result`，最后输出包含按任务通过率、延迟、成本和工具错误的 `eval_summary`。`eval:compare` 只读取已归一化的 Schema v3 NDJSON，并只比较各组共有的 `task + run` 样本；它不会自行调用 Claude Code、OpenCode 或其他 Agent。任务、格式、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
+`--runs` 最多 5 次；默认观测成本上限为 0.02 美元，达到上限后不会开始下一次请求。单次请求的最终成本只能在 Provider 返回 usage 后得知，因此该参数不是预付费硬限额；超过上限会在汇总中标记失败。Pro 必须用 `--model deepseek-v4-pro` 显式选择。Schema v3 的 dry-run 同时显示逻辑样本数和最大 Provider 请求数；真实执行每个样本输出 `eval_result`，最后输出包含按任务通过率、延迟、成本和工具错误的 `eval_summary`。任务、格式、真实 smoke 和解释边界见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)。
 
 `repair-js`、`repair-multi-file`、`repair-feedback` 和 `repair-config` 会在系统临时目录创建有缺陷的极小项目。评测器只自动批准 fixture 内的 write/edit，拒绝 Bash；Agent 结束后由评测器运行测试，确认指定源码确实改变、原文件没有缺失、受保护文件未变且没有创建额外文件，然后删除整个临时目录。`repair-feedback` 的隐藏回归测试位于 Agent 工作区外：第一次失败后，评测器只回填脱敏、截断且不含测试路径/堆栈的失败摘要，最多再执行一次 60 秒修复尝试。
 
