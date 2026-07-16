@@ -12,7 +12,7 @@ test("uses Pi ProjectTrustStore for session-only and remembered decisions", asyn
   try {
     await mkdir(join(cwd, ".pi", "skills"), { recursive: true });
     const initial = new ProductProjectTrust(cwd, agentDir);
-    assert.equal(initial.hasPiTrustResources(), true);
+    assert.equal(initial.hasTrustRequiringResources(), true);
     assert.deepEqual(initial.snapshot(), { status: "undecided", remembered: false, savedPath: undefined });
 
     initial.decide(true, false);
@@ -26,6 +26,22 @@ test("uses Pi ProjectTrustStore for session-only and remembered decisions", asyn
     assert.equal(restored.snapshot().status, "untrusted");
     assert.equal(restored.snapshot().remembered, true);
     assert.equal(restored.snapshot().savedPath, await realpath(cwd));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("project validation configuration requires trust without reading its contents", async () => {
+  const root = await mkdtemp(join(tmpdir(), "deepseek-code-trust-"));
+  const agentDir = join(root, "agent-home");
+  const cwd = join(root, "workspace");
+  try {
+    await mkdir(join(cwd, ".deepseek-code"), { recursive: true });
+    await writeFile(join(cwd, ".deepseek-code", "validation.json"), "not-json", "utf-8");
+    const trust = new ProductProjectTrust(cwd, agentDir);
+    assert.equal(trust.hasTrustRequiringResources(), true);
+    assert.deepEqual(trust.getProductResources().map((resource) => resource.name), ["validation.json"]);
+    assert.equal(trust.snapshot().status, "undecided");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

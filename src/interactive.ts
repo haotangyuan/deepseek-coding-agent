@@ -52,7 +52,7 @@ import {
 } from "./tool-policy.ts";
 import {
   createVerificationPrompt,
-  discoverValidationSuggestion,
+  discoverValidationSuggestions,
   type ValidationSuggestion,
 } from "./validation-suggestions.ts";
 
@@ -689,7 +689,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /settings [approval value] /trust [once|always|off|deny] /cache /diff /verify [confirm] /tool [id] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /settings [approval value] /trust [once|always|off|deny] /cache /diff /verify [name|confirm] /tool [id] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -1061,6 +1061,7 @@ export class InteractiveMode {
     try {
       const warning = await this.options.setProjectTrust(trusted, remember);
       this.projectTrustStatus = trusted ? "trusted" : "untrusted";
+      this.pendingVerification = undefined;
       const snapshot = this.options.getContextSnapshot();
       this.addSystem(
         `project context ${trusted ? "enabled" : "disabled"}${remember && !warning ? " and remembered" : " for this session"}; AGENTS=${snapshot.agentsFiles.length} Skills=${snapshot.skills.length} Prompts=${snapshot.prompts.length}`,
@@ -1123,6 +1124,7 @@ export class InteractiveMode {
     this.updateStatus("reloading context");
     try {
       await this.options.setProjectResourcesEnabled(enabled);
+      this.pendingVerification = undefined;
       const snapshot = this.options.getContextSnapshot();
       this.addSystem(
         `project resources ${enabled ? "enabled" : "disabled"}; loaded AGENTS=${snapshot.agentsFiles.length} Skills=${snapshot.skills.length} Prompts=${snapshot.prompts.length}`,
@@ -1481,14 +1483,19 @@ export class InteractiveMode {
       this.addError("no tracked write/edit changes are available to verify");
       return;
     }
-    if (argument && argument !== "confirm") {
-      this.addError("usage: /verify [confirm]");
-      return;
-    }
     if (argument !== "confirm") {
-      const suggestion = await discoverValidationSuggestion(this.options.cwd);
-      this.pendingVerification = suggestion;
-      if (!suggestion) {
+      const projectConfigEnabled = this.projectTrustStatus === "trusted"
+        && this.options.getContextSnapshot().projectResourcesEnabled;
+      let suggestions: ValidationSuggestion[];
+      try {
+        suggestions = await discoverValidationSuggestions(this.options.cwd, { projectConfigEnabled });
+      } catch (error) {
+        this.pendingVerification = undefined;
+        this.addError(`validation configuration failed: ${sanitizeError(error)}`);
+        return;
+      }
+      if (suggestions.length === 0) {
+        this.pendingVerification = undefined;
         this.transcript.addChild(new NoticeCard({
           title: "VERIFY · NO SUGGESTION",
           detail: "No supported validation entry was found in known project manifests.",
@@ -1498,9 +1505,29 @@ export class InteractiveMode {
         }));
         return;
       }
+      if (!argument && suggestions.length > 1) {
+        this.pendingVerification = undefined;
+        this.transcript.addChild(new NoticeCard({
+          title: "VERIFY · CHOOSE COMMAND",
+          detail: suggestions.map((suggestion) => `${suggestion.name} → ${suggestion.command}`).join(" · "),
+          action: "Run /verify <name> to preview one exact command before confirmation.",
+          footer: `${suggestions.length} trusted project commands · no model request · no command executed`,
+          tone: colors.ice,
+        }));
+        return;
+      }
+      const suggestion = argument
+        ? suggestions.find((candidate) => candidate.name === argument)
+        : suggestions[0];
+      if (!suggestion) {
+        this.pendingVerification = undefined;
+        this.addError(`unknown validation command: ${argument}; available: ${suggestions.map((candidate) => candidate.name).join(", ")}`);
+        return;
+      }
+      this.pendingVerification = suggestion;
       this.transcript.addChild(new NoticeCard({
         title: "VERIFY READY",
-        detail: `${suggestion.command}\nsource=${suggestion.source} · ${suggestion.reason}`,
+        detail: `${suggestion.command}\nname=${suggestion.name} · source=${suggestion.source} · ${suggestion.reason}`,
         action: "Run /verify confirm to start one new paid Agent turn. Bash approval still applies.",
         footer: "Preview only · no model request · no command executed",
         tone: colors.ice,
@@ -1510,6 +1537,12 @@ export class InteractiveMode {
     const suggestion = this.pendingVerification;
     if (!suggestion) {
       this.addError("run /verify first to review the exact suggested command and cost warning");
+      return;
+    }
+    if (suggestion.scope === "project"
+      && (this.projectTrustStatus !== "trusted" || !this.options.getContextSnapshot().projectResourcesEnabled)) {
+      this.pendingVerification = undefined;
+      this.addError("project validation command is no longer trusted or enabled; run /verify again");
       return;
     }
     this.pendingVerification = undefined;

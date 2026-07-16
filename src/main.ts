@@ -191,8 +191,12 @@ function productionDependencies(): CliDependencies {
       appendSystemPromptOverride: (base) => applyPromptProfile(options.promptProfile, base),
     });
     await resourceLoader.reload();
-    const projectTrustRequired = projectTrust.hasPiTrustResources()
-      || resourceFilter.getDiscoveredProjectResources().length > 0;
+    const projectTrustResources = [
+      ...resourceFilter.getDiscoveredProjectResources(),
+      ...projectTrust.getProductResources(),
+    ];
+    const projectTrustRequired = projectTrust.hasTrustRequiringResources()
+      || projectTrustResources.length > 0;
     if (!projectTrustRequired && !resourceFilter.isEnabled()) {
       settingsManager.setProjectTrusted(true);
       resourceFilter.setEnabled(true);
@@ -220,7 +224,7 @@ function productionDependencies(): CliDependencies {
       projectTrustRequired,
       projectTrust: {
         required: projectTrustRequired,
-        resources: resourceFilter.getDiscoveredProjectResources(),
+        resources: projectTrustResources,
         snapshot: projectTrust.snapshot(),
       },
     };

@@ -50,7 +50,7 @@ flowchart TD
     K --> L
 ```
 
-产品复用 Pi `ProjectTrustStore` 的规范化路径、最近祖先匹配、文件锁和读写格式（Pi `packages/coding-agent/src/core/trust-manager.ts:208` `ProjectTrustStore`）。Pi 自身将 `.pi` 资源和祖先 `.agents/skills` 识别为需要信任的项目资源（同文件 `hasTrustRequiringProjectResources()`，`:184`）。本项目额外通过 ResourceLoader override 记录真实发现的项目/祖先 AGENTS、Skills 和 Prompts，从而覆盖 Pi 检测函数不包含普通 AGENTS.md 的情况（`src/context-resources.ts:62` `createProjectResourceFilter()`）。
+产品复用 Pi `ProjectTrustStore` 的规范化路径、最近祖先匹配、文件锁和读写格式（Pi `packages/coding-agent/src/core/trust-manager.ts:208` `ProjectTrustStore`）。Pi 自身将 `.pi` 资源和祖先 `.agents/skills` 识别为需要信任的项目资源（同文件 `hasTrustRequiringProjectResources()`，`:184`）。本项目额外通过 ResourceLoader override 记录真实发现的项目/祖先 AGENTS、Skills 和 Prompts，从而覆盖 Pi 检测函数不包含普通 AGENTS.md 的情况（`src/context-resources.ts:62` `createProjectResourceFilter()`）；`.deepseek-code/validation.json` 也作为产品项目资源列入同一信任卡，但在信任前只检查存在性、不读取内容。
 
 启动时先用 `SettingsManager.create(..., { projectTrusted: false })`，因此未信任项目的 `.pi/settings.json` 不会载入；Pi 的对应行为位于 `packages/coding-agent/src/core/settings-manager.ts:319` `fromStorage()` 和 `:350` `loadFromStorage()`。作出决定后，产品同步切换 SettingsManager 与资源过滤器，再调用 `AgentSession.reload()`（`src/main.ts:274` `setProjectTrust`）。Pi 的 `setProjectTrusted(false)` 会清空项目设置并只保留全局设置（Pi `settings-manager.ts:454`）。
 
@@ -71,6 +71,7 @@ flowchart TD
 
 - 未决定前，交互模式阻断普通任务；一次性 CLI 不询问而禁用项目上下文。
 - `/resources on` 不能绕过未信任状态。
+- 项目验证配置只有在“已信任 + 项目资源已启用”时读取；撤销任一条件都会清除 `/verify` 的待确认预览。
 - 第三方 Extension 继续由 `noExtensions: true` 禁用（`src/main.ts:179`）。
 - 项目信任与 Agent `plan/build`、工具 `ask/auto-read/deny` 完全独立。
 - 保存的用户设置和 trust 文件都不包含 API Key。
@@ -82,7 +83,7 @@ flowchart TD
 
 ## 5. 当前限制
 
-- 尚未增加本项目专属的项目级偏好文件或“建议验证命令”覆盖；`/verify` 仍从受信任工作区的固定 manifest 推导候选。
+- 尚未增加通用项目偏好文件；当前只提供边界明确的 `.deepseek-code/validation.json` 命名验证命令。
 - remembered trust 按项目规范化路径和 Pi 最近祖先规则生效；移动仓库后需要重新决定。
 - 信任不是内容审计：启用前仍应阅读列出的 AGENTS/Skills/Prompts。
 - 这不是 OS 沙箱。批准 Bash 后仍具有当前本地用户权限。
@@ -90,7 +91,7 @@ flowchart TD
 ## 6. 验证
 
 - `test/product-settings.test.ts`：字段白名单、权限、原子保存、损坏文件安全回退和不覆盖。
-- `test/project-trust.test.ts`：临时/持久决定、真实路径规范化、损坏 store fail-closed。
+- `test/project-trust.test.ts`：临时/持久决定、真实路径规范化、损坏 store fail-closed、验证配置存在性触发信任。
 - `test/context-resources.test.ts`：未信任 AGENTS 被发现但不进入 System Prompt，信任 reload 后才进入。
-- `test/interactive.test.ts`：80×24 信任卡、任务阻断、四种决定、设置持久化和资源绕过拒绝。
+- `test/interactive.test.ts`：80×24 信任卡、任务阻断、四种决定、设置持久化、资源绕过拒绝及验证命令预览失效。
 - `test/cli.test.ts`：保存默认值、显式参数优先和一次性未信任警告。

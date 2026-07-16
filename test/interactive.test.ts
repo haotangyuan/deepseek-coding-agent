@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   type AgentSessionEvent,
@@ -774,6 +777,7 @@ test("previews explicit verification without a request and starts exactly one co
   const session = new FakeSession(model);
   const terminal = new FakeTerminal();
   const snapshot = createSnapshot();
+  snapshot.projectResourcesEnabled = false;
   const checkpoints = {
     snapshot: () => ({ status: "ready" as const, files: ["src/example.ts"], bashObserved: false, warnings: [] }),
     diff: () => ({ files: ["src/example.ts"], patch: "+changed", bashObserved: false, warnings: [] }),
@@ -844,6 +848,83 @@ test("previews explicit verification without a request and starts exactly one co
 
   terminal.type("/exit");
   await running;
+});
+
+test("selects trusted project validation commands and invalidates previews when resources are disabled", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "deepseek-code-interactive-verify-"));
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const snapshot = createSnapshot();
+  try {
+    await mkdir(join(cwd, ".deepseek-code"));
+    await writeFile(join(cwd, ".deepseek-code", "validation.json"), JSON.stringify({ commands: [
+      { name: "unit", command: "npm test", description: "Fast unit tests" },
+      { name: "full", command: "npm run check && npm test", description: "Full local gate" },
+    ] }));
+    const mode = new InteractiveMode({
+      session,
+      modelRegistry: registry,
+      cwd,
+      approvalMode: "ask",
+      agentMode: "build",
+      checkpoints: {
+        snapshot: () => ({ status: "ready" as const, files: ["src/example.ts"], bashObserved: false, warnings: [] }),
+        diff: () => ({ files: ["src/example.ts"], patch: "+changed", bashObserved: false, warnings: [] }),
+        undo: async () => ({ restoredFiles: ["src/example.ts"] }),
+      },
+      sessionControls: createSessionControls(),
+      terminal,
+      clearContext: () => undefined,
+      getContextSnapshot: () => snapshot,
+      setProjectResourcesEnabled: async (enabled) => { snapshot.projectResourcesEnabled = enabled; },
+      projectTrust: {
+        required: true,
+        resources: [{ name: "validation.json", path: join(cwd, ".deepseek-code", "validation.json"), scope: "project" }],
+        snapshot: { status: "trusted", remembered: false },
+      },
+      setProjectTrust: async () => undefined,
+      setAgentMode: () => undefined,
+      getGitStatus: async () => ({ available: true, status: " M src/example.ts" }),
+    });
+    const running = mode.run();
+    await flush();
+
+    terminal.type("/verify");
+    await flush();
+    assert.match(plainTerminalOutput(terminal), /VERIFY · CHOOSE COMMAND.*unit → npm test · full → npm run check && npm test/s);
+
+    terminal.type("/verify missing");
+    await flush();
+    assert.match(plainTerminalOutput(terminal), /unknown validation command: missing.*available: unit, full/s);
+
+    terminal.type("/verify unit");
+    await flush();
+    assert.match(plainTerminalOutput(terminal), /VERIFY READY.*npm test.*name=unit.*validation\.json/s);
+
+    terminal.type("/resources off");
+    await flush();
+    terminal.type("/verify confirm");
+    await flush();
+    assert.deepEqual(session.prompts, []);
+    assert.match(plainTerminalOutput(terminal), /run \/verify first.*exact suggested command/s);
+
+    terminal.type("/resources on");
+    await flush();
+    terminal.type("/verify full");
+    await flush();
+    terminal.type("/verify confirm");
+    await flush();
+    assert.equal(session.prompts.length, 1);
+    assert.match(session.prompts[0]!, /npm run check && npm test/);
+
+    terminal.type("/exit");
+    await running;
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("rejects verification when no tracked write or edit is available", async () => {

@@ -1,0 +1,19 @@
+{
+  "commands": [
+    {
+      "name": "check",
+      "command": "npm run check",
+      "description": "TypeScript source and test type checks"
+    },
+    {
+      "name": "test",
+      "command": "npm test",
+      "description": "Complete automated test suite with local substitutes"
+    },
+    {
+      "name": "full",
+      "command": "npm run check && npm run build && npm test",
+      "description": "Full local validation gate"
+    }
+  ]
+}

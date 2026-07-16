@@ -343,7 +343,7 @@ Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、显式验证闭环、Cache Inspector、Plan/Build、敏感路径保护、进程内精确 Bash 授权和可展开工具结果卡已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/verification-loop.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md`、`docs/session-approvals.md` 和 `docs/tool-result-cards.md`。
+当前进展（2026-07-16）：**评测 Schema v3、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、受信任项目验证配置、Cache Inspector、Plan/Build、敏感路径保护、进程内精确 Bash 授权和可展开工具结果卡已完成，优化实验进行中。** 评测对整个逻辑样本累计两轮 repair 指标，只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制；`.env` 和常见凭据路径默认拒绝，重复的完全相同 Bash 命令可由用户显式授权到当前进程。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/verification-loop.md`、`docs/cache-inspector.md`、`docs/plan-build-mode.md`、`docs/sensitive-paths.md`、`docs/session-approvals.md` 和 `docs/tool-result-cards.md`。
 
 实验方向：
 
@@ -465,6 +465,7 @@ npm test
 | Done | Pi Session/Tree 选择器 | 已完成搜索、过滤、取消、树导航和当前工作区会话热切换 |
 | Done | 本轮 Diff 与 Undo | 已完成本轮聚合补丁、冲突保护、Resume 和显式文件恢复 |
 | Done | 显式验证闭环 | 已完成只读候选发现、双阶段确认和验证 Evidence 回收 |
+| Done | 受信任项目验证配置 | 已完成命名命令、Trust/Resources 双门、边界校验与失效预览保护 |
 | Done | 本地设置与项目信任 | 已完成私有偏好、CLI 覆盖、Pi trust store、fail-closed 资源加载和 TUI 决策卡 |
 | Done | Prompt Profile 首轮量化 | 18 个 repair 样本无质量收益，默认保持 pi；后续先扩充高区分度任务 |
 | P1 | DeepSeek 量化优化 | 扩充跨模块与验证失败任务，再评估 Prompt/thinking/模型档位 |
@@ -536,9 +537,11 @@ npm test
 | D-042 | 未知项目上下文 fail-closed，信任与工具审批保持独立 | 已采纳 | AGENTS/Skills/Prompts 会改变模型行为；启用它们不应同时授予文件或 Shell 权限 |
 | D-043 | DeepSeek Prompt 先作为显式 Profile A/B，默认保持 Pi | 已采纳 | 通过 `appendSystemPromptOverride` 保留 Pi 和用户上下文；没有重复评测证据前不改变默认行为或增加自动路由 |
 | D-044 | 首轮重复 A/B 后默认继续使用 Pi Profile | 已采纳 | 两档 9/9 通过，DeepSeek Profile 总体耗时高 4.0%、成本高 6.3%，没有质量收益；保留显式实验入口但不默认注入 |
+| D-045 | 项目验证命令作为受信任资源，不作为普通偏好 | 已采纳 | 命令可执行且会改变本机状态；信任前只发现存在，启用后严格解析，执行仍经过预览、Agent 回合和 Bash 审批 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成受信任项目验证配置。`.deepseek-code/validation.json` 支持最多 20 个命名命令；未知项目先展示来源且不读取，只有 Trust 与 Resources 同时启用才解析。`/verify` 支持列表、命名预览和显式确认，撤销信任/资源后旧预览失效；无效 JSON、单行约束和 symlink 逃逸 fail-closed。自动化增至 93 项。
 - **2026-07-16：** 完成 Prompt Profile 重复 A/B。Flash/high 下三个 repair 任务每档各 3 次，两档均 9/9 通过且无工具/Provider 错误；DeepSeek Profile 总体平均耗时高 4.0%、成本高 6.3%，未观察到质量收益。默认保持 `pi`，实验入口保留，下一步先扩充高区分度任务。详见 `docs/prompt-profile-ab.md`。
 - **2026-07-16：** 完成 P1-C 首个可评测 Prompt Profile。CLI/TUI/评测显式支持 `pi|deepseek`，DeepSeek 短提示通过 Pi append override 组合而非替换默认 System Prompt，并保留受信任项目 APPEND_SYSTEM；88/88 自动化、dry-run 和两档各一次 Flash/high `exact` 真实 Smoke 通过。单次缓存/延迟差异不作优化结论，默认仍为 `pi`，等待重复 A/B 决策。
 - **2026-07-16：** 完成本地设置与项目上下文信任。产品私有设置保存 DeepSeek-only 模型、thinking、mode、approval 和 reasoning 展示；显式 CLI 值优先，损坏文件安全回退且不覆盖。未知项目在 AGENTS/Skills/Prompts 和项目设置进入模型前展示来源，支持本次/永久启用或禁用；一次性 CLI fail-closed，Extension 与工具审批边界不变。

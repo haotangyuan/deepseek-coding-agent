@@ -3,8 +3,11 @@ import {
   ProjectTrustStore,
   type ProjectTrustStoreEntry,
 } from "@earendil-works/pi-coding-agent";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+import type { ContextResourceItem } from "./context-resources.ts";
 import { PRODUCT_CONFIG_DIR } from "./product-settings.ts";
+import { PROJECT_VALIDATION_CONFIG } from "./validation-suggestions.ts";
 
 export type ProductProjectTrustStatus = "trusted" | "untrusted" | "undecided" | "error";
 
@@ -32,8 +35,20 @@ export class ProductProjectTrust {
     }
   }
 
-  hasPiTrustResources(): boolean {
-    return hasTrustRequiringProjectResources(this.cwd);
+  hasTrustRequiringResources(): boolean {
+    return hasTrustRequiringProjectResources(this.cwd) || this.getProductResources().length > 0;
+  }
+
+  getProductResources(): ContextResourceItem[] {
+    const path = join(this.cwd, PROJECT_VALIDATION_CONFIG);
+    return existsSync(path)
+      ? [{
+          name: "validation.json",
+          path,
+          scope: "project",
+          description: "Project-defined validation commands",
+        }]
+      : [];
   }
 
   isTrusted(): boolean {
