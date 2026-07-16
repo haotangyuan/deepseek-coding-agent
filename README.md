@@ -17,6 +17,7 @@
 - 默认且仅允许 `deepseek` Provider，默认模型为 `deepseek-v4-flash`，不会回退到其他 Provider。
 - 支持从命令行提交一次性任务，输出文本、reasoning、工具调用、工具结果、重试、错误和完成事件。
 - 支持 `ask`、`auto-read`、`deny` 三种工具审批模式；默认 `ask`。
+- 支持显式 `plan`/`build` Agent 模式；Plan 从 Pi 活动工具集合移除 write/edit/bash，Build 恢复审批控制的完整工具集，默认 `build + ask`。
 - 直接复用 Pi 的 read/ls/grep 做受限仓库探索；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
 - 每轮 settled 后展示 Completion Evidence：明确记录 write/edit 文件、实际 diff 查看、可识别验证结果和错误事实；不自动追加付费模型轮次，也不把未知命令猜成测试。
@@ -83,6 +84,7 @@ npm start
 /skills
 /prompts
 /resources [on|off]
+/mode [plan|build]
 /clear
 /exit
 ```
@@ -92,6 +94,8 @@ Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steerin
 `/cache` 直接读取 Pi 已归一化的 DeepSeek usage：本轮通过提交前后 SessionStats 做差，Session 数值包含 JSONL 全历史的实际计费 usage。它不会为了诊断缓存再发送请求，也不会猜测命中下降原因。
 
 `/context` 展示当前有效 System Prompt 的字符数和粗略 token、活动工具及资源数量；`/agents`、`/skills`、`/prompts` 展示真实来源路径和作用域。`/resources off` 只在当前进程内移除项目/祖先 AGENTS 和项目级 Skills/Prompts，再调用 Pi `AgentSession.reload()`；用户级资源继续保留。上下文开关不改变工具审批模式，两者是独立边界。
+
+`/mode plan` 只允许空闲时切换，并通过 Pi `AgentSession.setActiveToolsByName()` 将下一轮工具缩减为 read/ls/grep；`/mode build` 恢复当前审批模式允许的工具。模式只影响当前进程，不写入 Session JSONL；恢复会话时使用 CLI 默认值或显式 `--mode`。
 
 已加载的 Skill 可用 `/skill:name 参数` 显式调用，Prompt Template 可用 `/name 参数` 调用。模型可见的 Skills 仍由 Pi 按需读取，不会由本项目复制进 System Prompt。
 
@@ -109,6 +113,12 @@ npm start -- "Summarize this repository"
 
 ```bash
 npm start -- --model deepseek-v4-flash "Read README.md and summarize it"
+```
+
+只读分析并输出方案：
+
+```bash
+npm start -- --mode plan --approval ask "Inspect this repository and propose a fix plan"
 ```
 
 显式固定 thinking，并输出 TTFT、耗时、工具、token、cache 和成本指标：
@@ -137,6 +147,8 @@ npm start -- --resume 019f65e2 "Continue the unfinished task"
 普通文本增量写入标准输出；reasoning、工具调用参数、工具执行结果、重试、错误和 `[agent:complete]` 写入标准错误，便于脚本按通道处理。工具事件中的结构化值最多输出 4000 个字符，并经过敏感值遮蔽。
 
 ## 工具审批
+
+Agent 模式与审批是两条独立轴：`plan` 决定模型是否能看到修改工具，`approval` 决定可见工具能否自动执行。默认 `build + ask`；`plan + ask` 仍只有 read/ls/grep，`build + auto-read` 也只有 read/ls/grep，`deny` 在任一模式下都不暴露工具。
 
 默认 `ask` 模式自动允许工作区内的 read，并在每次 write、edit、bash 前请求确认：
 
@@ -187,6 +199,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Compaction summary 由当前 DeepSeek 模型生成，会产生一次模型请求；过短或刚压缩过的会话会由 Pi 拒绝重复压缩。
 - `/context` 的 token 数按 4 字符约 1 token 粗估，不是 Provider tokenizer 的精确计数；资源开关重启进程后恢复开启。
 - 工具审批是产品层防误操作机制，不提供 OS 级沙箱；项目发现的第三方 Extension 当前默认禁用。
+- Plan Mode 是真实只读工具边界，但不强制模型输出固定格式的计划；当前模式不持久化，运行中或审批等待时不能切换。
 - 不支持 MCP、多 Agent、IDE 插件或云端服务。
 
 ## 仓库边界
@@ -195,7 +208,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 

@@ -1,6 +1,6 @@
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type { SessionSelection } from "./sessions.ts";
-import { APPROVAL_MODES, type ApprovalMode } from "./tool-policy.ts";
+import { AGENT_MODES, APPROVAL_MODES, type AgentMode, type ApprovalMode } from "./tool-policy.ts";
 import { describeDeepSeekError } from "./deepseek-errors.ts";
 
 export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
@@ -15,6 +15,7 @@ export interface CliOptions {
   thinkingLevel: DeepSeekThinkingLevel;
   thinkingExplicit: boolean;
   approvalMode: ApprovalMode;
+  agentMode: AgentMode;
   session: SessionSelection;
   metrics: boolean;
   task: string;
@@ -47,6 +48,7 @@ export function parseCliArgs(args: string[]): CliOptions {
   let thinkingLevel: DeepSeekThinkingLevel = "high";
   let thinkingExplicit = false;
   let approvalMode: ApprovalMode = "ask";
+  let agentMode: AgentMode = "build";
   let session: SessionSelection = { type: "new" };
   let metrics = false;
   const taskParts: string[] = [];
@@ -92,6 +94,19 @@ export function parseCliArgs(args: string[]): CliOptions {
         throw new Error(`Invalid approval mode: ${value || "(empty)"}`);
       }
       approvalMode = value as ApprovalMode;
+    } else if (arg === "--mode") {
+      const parsed = readOptionValue(args, index, "--mode");
+      if (!AGENT_MODES.includes(parsed.value as AgentMode)) {
+        throw new Error(`Invalid agent mode: ${parsed.value}`);
+      }
+      agentMode = parsed.value as AgentMode;
+      index = parsed.nextIndex;
+    } else if (arg.startsWith("--mode=")) {
+      const value = arg.slice("--mode=".length);
+      if (!AGENT_MODES.includes(value as AgentMode)) {
+        throw new Error(`Invalid agent mode: ${value || "(empty)"}`);
+      }
+      agentMode = value as AgentMode;
     } else if (arg === "--continue" || arg === "-c") {
       if (session.type !== "new") throw new Error("Only one session selection option is allowed");
       session = { type: "continue" };
@@ -134,6 +149,7 @@ export function parseCliArgs(args: string[]): CliOptions {
     thinkingLevel,
     thinkingExplicit,
     approvalMode,
+    agentMode,
     session,
     metrics,
     task: taskParts.join(" ").trim(),
@@ -256,12 +272,13 @@ export function formatAgentEvent(event: AgentSessionEvent): OutputRecord[] {
 
 export function usage(): string {
   return [
-    "Usage: deepseek-code [--model MODEL] [--thinking LEVEL] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
+    "Usage: deepseek-code [--model MODEL] [--thinking LEVEL] [--mode MODE] [--approval MODE] [--continue | --resume ID_OR_PATH | --ephemeral] [--metrics] [\"task\"]",
     "",
     `Default model: ${DEFAULT_MODEL_ID}`,
     `Allowed provider: ${DEEPSEEK_PROVIDER}`,
     "Thinking levels: off, high (default), max",
     "Approval modes: ask (default), auto-read, deny",
+    "Agent modes: plan (read-only), build (default)",
     "Session options: --continue/-c resumes latest; --resume/-r selects history; --ephemeral disables persistence",
     "Metrics: --metrics emits one redacted JSON summary to stderr",
   ].join("\n");

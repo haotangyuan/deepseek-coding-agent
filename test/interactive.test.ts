@@ -65,6 +65,7 @@ class FakeSession implements InteractiveSession {
   steering: string[] = [];
   aborts = 0;
   reloads = 0;
+  activeTools = ["read", "ls", "grep", "write", "edit", "bash"];
   private listener: ((event: AgentSessionEvent) => void) | undefined;
 
   constructor(model: SelectedModel) {
@@ -131,7 +132,7 @@ class FakeSession implements InteractiveSession {
   }
 
   getActiveToolNames(): string[] {
-    return ["read", "ls", "grep", "write", "edit", "bash"];
+    return this.activeTools;
   }
 
   async reload(): Promise<void> {
@@ -240,6 +241,7 @@ test("parses supported interactive commands without treating normal prompts as c
   assert.deepEqual(parseInteractiveCommand("/model deepseek-v4-pro"), { name: "model", argument: "deepseek-v4-pro" });
   assert.deepEqual(parseInteractiveCommand("/thinking high"), { name: "thinking", argument: "high" });
   assert.deepEqual(parseInteractiveCommand("/cache"), { name: "cache", argument: "" });
+  assert.deepEqual(parseInteractiveCommand("/mode plan"), { name: "mode", argument: "plan" });
   assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
 });
 
@@ -257,6 +259,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
     modelRegistry: registry,
     cwd: process.cwd(),
     approvalMode: "ask",
+    agentMode: "build",
     sessionControls,
     terminal,
     clearContext: () => { clears += 1; },
@@ -264,6 +267,10 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
     setProjectResourcesEnabled: async (enabled) => {
       snapshot.projectResourcesEnabled = enabled;
       await session.reload();
+    },
+    setAgentMode: (agentMode) => {
+      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep"] : ["read", "ls", "grep", "write", "edit", "bash"];
+      snapshot.activeTools = [...session.activeTools];
     },
     getGitStatus: async () => ({ available: true, status: "" }),
   });
@@ -293,6 +300,15 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   terminal.type("/thinking low");
   await flush();
   assert.equal(session.thinkingLevel, "low");
+
+  terminal.type("/mode plan");
+  await flush();
+  assert.deepEqual(session.activeTools, ["read", "ls", "grep"]);
+  assert.match(plainTerminalOutput(terminal), /agent mode changed to plan; active tools: read, ls, grep/);
+
+  terminal.type("/mode build");
+  await flush();
+  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "write", "edit", "bash"]);
 
   terminal.type("/model deepseek-v4-pro");
   await flush();
@@ -431,17 +447,26 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
     modelRegistry: registry,
     cwd: process.cwd(),
     approvalMode: "ask",
+    agentMode: "build",
     sessionControls,
     terminal,
     clearContext: () => undefined,
     getContextSnapshot: () => snapshot,
     setProjectResourcesEnabled: async (enabled) => { snapshot.projectResourcesEnabled = enabled; },
+    setAgentMode: (agentMode) => {
+      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep"] : ["read", "ls", "grep", "write", "edit", "bash"];
+    },
     getGitStatus: async () => ({ available: false, status: "" }),
   });
   const running = mode.run();
   await flush();
 
   session.isStreaming = true;
+  terminal.type("/mode plan");
+  await flush();
+  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "write", "edit", "bash"]);
+  assert.match(plainTerminalOutput(terminal), /agent mode cannot be changed during an active operation/);
+
   terminal.type("adjust the plan");
   await flush();
   assert.deepEqual(session.steering, ["adjust the plan"]);

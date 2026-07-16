@@ -332,7 +332,7 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence 和 Cache Inspector 已完成，优化实验进行中。** 每轮 settled 现在同时展示完成证据与本轮/Session cache hit、miss、rate；`/cache` 可按需查看，足量相邻轮次下降 20pp 才提示且不猜原因。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md` 和 `docs/cache-inspector.md`。
+当前进展（2026-07-16）：**评测、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、Cache Inspector 和 Plan/Build 已完成，优化实验进行中。** Plan 通过真实工具 allowlist 与策略二次阻断保持只读，Build 仍受审批控制；每轮 settled 同时展示完成证据与本轮/Session cache hit、miss、rate。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md`、`docs/cache-inspector.md` 和 `docs/plan-build-mode.md`。
 
 实验方向：
 
@@ -356,7 +356,7 @@ flowchart TB
 
 目标：让项目不仅“能运行”，还能够稳定证明设计价值。
 
-产品参考边界：借鉴 Claude Code 的预算、工具 allow/deny 和计划/执行分层，以及 Codex CLI 的非交互 exec、结构化输出、ephemeral 与 workspace 隔离理念。当前已落地临时工作区、最小工具授权、NDJSON 结果和观测成本上限；Plan Mode 与 OS 级 sandbox 需要独立设计，不在评测脚本中伪实现。
+产品参考边界：借鉴 Claude Code 的预算、工具 allow/deny 和计划/执行分层，以及 Codex CLI 的非交互 exec、结构化输出、ephemeral 与 workspace 隔离理念。当前已落地临时工作区、最小工具授权、NDJSON 结果、观测成本上限和产品级 Plan/Build；OS 级 sandbox 仍需独立设计，不在评测脚本中伪实现。
 
 固定演示场景：
 
@@ -501,9 +501,11 @@ npm test
 | D-028 | 优先复用 Pi 原生 ls/grep，find 通过依赖门槛后再开放 | 已采纳 | 提高 DeepSeek 仓库探索信息密度；不复制搜索实现，也不让缺少 fd 的工具进入默认稳定前缀 |
 | D-029 | Completion Evidence 先观察，不自动续跑或强制阻断 | 已采纳 | 用 settled 事件呈现真实修改、diff、验证和错误证据；避免隐藏成本及不可靠完成判断 |
 | D-030 | Cache Inspector 只消费 Pi 累计 usage 并使用快照差值 | 已采纳 | 不重复解析 Provider；0 token 显示 n/a，足量相邻轮次下降 20pp 才做事实型提示 |
+| D-031 | Plan/Build 与审批模式保持正交且不持久化 | 已采纳 | Plan 通过活动工具与策略钩子双重只读；Build 不绕过审批，resume 由当前启动参数决定 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成 Plan/Build。CLI `--mode` 与 TUI `/mode` 通过 Pi 动态工具 API 切换只读/可修改集合，Plan 对直接修改调用保留策略二次阻断；52/52 自动化测试与真实 Flash 只读 Smoke 通过。
 - **2026-07-16：** 完成 Cache Inspector。本轮/Session cache hit、miss、rate 与 `/cache` 已接入 CLI/TUI；49/49 测试与真实 Flash usage Smoke 通过，下降提示有 100 token 和 20pp 门槛，不触发额外请求或猜测原因。
 - **2026-07-16：** 完成 Completion Evidence。CLI/TUI 在 settled 后显示 write/edit 文件、实际 diff、识别验证和错误事实；45/45 测试及真实 Flash 只读 Smoke 通过，组合命令失败保持保守语义，不触发额外模型调用。
 - **2026-07-16：** 审计 Claude Code/OpenCode/DeepSeek-native 建议并形成差距矩阵；默认工具新增 Pi ls/grep，find 因 fd 依赖 Smoke 失败暂缓；`repair-feedback` 三次重复全部恢复且工具错误为 0。

@@ -42,7 +42,8 @@ import {
   type SessionSelection,
 } from "./sessions.ts";
 import {
-  activeToolsForMode,
+  activeToolsForAgentMode,
+  type AgentMode,
   type ApprovalMode,
   type ApprovalRequest,
   createToolPolicy,
@@ -101,6 +102,7 @@ export interface CliDependencies {
     restoreSavedModel: boolean;
     thinkingLevel?: DeepSeekThinkingLevel;
     approvalMode: ApprovalMode;
+    agentMode: AgentMode;
     sessionSelection: SessionSelection;
   }): Promise<void>;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
@@ -171,11 +173,12 @@ function productionDependencies(): CliDependencies {
     authStorage,
     modelRegistry,
     createSession: createProductionSession,
-    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, approvalMode, sessionSelection }) => {
+    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, approvalMode, agentMode, sessionSelection }) => {
       let approvalHandler: ((request: ApprovalRequest) => Promise<boolean>) | undefined;
       const toolPolicy = createToolPolicy({
         cwd,
         mode: approvalMode,
+        agentMode,
         approve: (request) => approvalHandler?.(request) ?? Promise.resolve(false),
       });
       const resourceFilter = createProjectResourceFilter(cwd, agentDir);
@@ -186,7 +189,7 @@ function productionDependencies(): CliDependencies {
         restoreSavedModel,
         thinkingLevel,
         toolPolicy,
-        tools: activeToolsForMode(approvalMode),
+        tools: activeToolsForAgentMode(approvalMode, agentMode),
         sessionSelection,
         resourceFilter,
       });
@@ -195,6 +198,7 @@ function productionDependencies(): CliDependencies {
         modelRegistry,
         cwd,
         approvalMode,
+        agentMode,
         sessionControls: createSessionControls(created.session, cwd),
         clearContext: () => {
           created.session.sessionManager.resetLeaf();
@@ -217,6 +221,10 @@ function productionDependencies(): CliDependencies {
             await created.session.reload();
             throw error;
           }
+        },
+        setAgentMode: (nextMode) => {
+          created.session.setActiveToolsByName(activeToolsForAgentMode(approvalMode, nextMode));
+          toolPolicy.setAgentMode(nextMode);
         },
         getGitStatus,
       });
@@ -290,6 +298,7 @@ export async function runCli(
         restoreSavedModel: !parsed.modelExplicit && restoreSession,
         thinkingLevel,
         approvalMode: parsed.approvalMode,
+        agentMode: parsed.agentMode,
         sessionSelection: parsed.session,
       });
       return 0;
@@ -333,10 +342,11 @@ export async function runCli(
     const toolPolicy = createToolPolicy({
       cwd: dependencies.cwd,
       mode: parsed.approvalMode,
+      agentMode: parsed.agentMode,
       approve: io.approve ?? (async () => false),
     });
-    const tools = activeToolsForMode(parsed.approvalMode);
-    io.stderr(`[policy] mode=${parsed.approvalMode} workspace=${dependencies.cwd}\n`);
+    const tools = activeToolsForAgentMode(parsed.approvalMode, parsed.agentMode);
+    io.stderr(`[policy] agent-mode=${parsed.agentMode} approval=${parsed.approvalMode} workspace=${dependencies.cwd}\n`);
     const created = await dependencies.createSession({
       authStorage: dependencies.authStorage,
       modelRegistry: dependencies.modelRegistry,

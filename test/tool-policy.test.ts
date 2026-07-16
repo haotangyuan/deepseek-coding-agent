@@ -14,6 +14,7 @@ import {
   createWriteTool,
 } from "@earendil-works/pi-coding-agent";
 import {
+  activeToolsForAgentMode,
   activeToolsForMode,
   createToolPolicy,
   createToolPolicyExtension,
@@ -37,6 +38,37 @@ test("maps approval modes to the tools exposed to the model", () => {
   assert.deepEqual(activeToolsForMode("ask"), ["read", "ls", "grep", "write", "edit", "bash"]);
   assert.deepEqual(activeToolsForMode("auto-read"), ["read", "ls", "grep"]);
   assert.deepEqual(activeToolsForMode("deny"), []);
+});
+
+test("plan mode exposes only read-only tools and composes with approval mode", () => {
+  assert.deepEqual(activeToolsForAgentMode("ask", "plan"), ["read", "ls", "grep"]);
+  assert.deepEqual(activeToolsForAgentMode("auto-read", "plan"), ["read", "ls", "grep"]);
+  assert.deepEqual(activeToolsForAgentMode("deny", "plan"), []);
+  assert.deepEqual(activeToolsForAgentMode("ask", "build"), ["read", "ls", "grep", "write", "edit", "bash"]);
+});
+
+test("plan mode blocks mutating tools and switching to build restores approval", async () => {
+  await withWorkspace(async (workspace) => {
+    let approvals = 0;
+    const policy = createToolPolicy({
+      cwd: workspace,
+      mode: "ask",
+      agentMode: "plan",
+      approve: async () => {
+        approvals += 1;
+        return true;
+      },
+    });
+
+    const blocked = await policy.evaluate("write", { path: "file.txt", content: "plan must not write\n" });
+    assert.equal(blocked.allowed, false);
+    assert.match(blocked.reason ?? "", /disabled in plan mode/);
+    assert.equal(approvals, 0);
+
+    policy.setAgentMode("build");
+    assert.equal((await policy.evaluate("write", { path: "file.txt", content: "build may write\n" })).allowed, true);
+    assert.equal(approvals, 1);
+  });
 });
 
 test("allows reads inside the workspace and blocks lexical traversal", async () => {

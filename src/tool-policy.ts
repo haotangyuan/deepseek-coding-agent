@@ -8,6 +8,8 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 export const APPROVAL_MODES = ["ask", "auto-read", "deny"] as const;
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
+export const AGENT_MODES = ["plan", "build"] as const;
+export type AgentMode = (typeof AGENT_MODES)[number];
 
 export interface ApprovalRequest {
   toolName: "write" | "edit" | "bash";
@@ -24,6 +26,8 @@ export interface ToolPolicyDecision {
 
 export interface ToolPolicy {
   mode: ApprovalMode;
+  agentMode: AgentMode;
+  setAgentMode(mode: AgentMode): void;
   evaluate(toolName: string, input: Record<string, unknown>): Promise<ToolPolicyDecision>;
 }
 
@@ -182,19 +186,33 @@ export function activeToolsForMode(mode: ApprovalMode): string[] {
   return [...SUPPORTED_TOOLS];
 }
 
+export function activeToolsForAgentMode(approvalMode: ApprovalMode, agentMode: AgentMode): string[] {
+  if (approvalMode === "deny") return [];
+  if (agentMode === "plan") return [...READ_ONLY_TOOLS];
+  return activeToolsForMode(approvalMode);
+}
+
 export function createToolPolicy(options: {
   cwd: string;
   mode: ApprovalMode;
+  agentMode?: AgentMode;
   approve: ApprovalPrompt;
 }): ToolPolicy {
-  return {
+  const policy: ToolPolicy = {
     mode: options.mode,
+    agentMode: options.agentMode ?? "build",
+    setAgentMode: (mode) => {
+      policy.agentMode = mode;
+    },
     evaluate: async (toolName, input) => {
       if (!isSupportedTool(toolName)) {
         return { allowed: false, reason: `Unsupported tool: ${toolName}` };
       }
       if (options.mode === "deny") {
         return { allowed: false, reason: "Tool execution is disabled by approval mode deny" };
+      }
+      if (policy.agentMode === "plan" && MUTATING_TOOLS.has(toolName)) {
+        return { allowed: false, reason: `${toolName} is disabled in plan mode` };
       }
 
       if (toolName === "read" || toolName === "write" || toolName === "edit") {
@@ -236,6 +254,7 @@ export function createToolPolicy(options: {
       }
     },
   };
+  return policy;
 }
 
 export function createToolPolicyExtension(policy: ToolPolicy): InlineExtension {

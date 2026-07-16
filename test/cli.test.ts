@@ -22,6 +22,7 @@ test("parses the default model and task text", () => {
     thinkingLevel: "high",
     thinkingExplicit: false,
     approvalMode: "ask",
+    agentMode: "build",
     session: { type: "new" },
     metrics: false,
     task: "summarize this repo",
@@ -39,11 +40,17 @@ test("rejects unknown options and missing model values", () => {
   assert.throws(() => parseCliArgs(["--unknown"]), /Unknown option/);
   assert.throws(() => parseCliArgs(["--model"]), /requires a value/);
   assert.throws(() => parseCliArgs(["--approval", "always"]), /Invalid approval mode/);
+  assert.throws(() => parseCliArgs(["--mode", "review"]), /Invalid agent mode/);
 });
 
 test("parses explicit approval modes", () => {
   assert.equal(parseCliArgs(["--approval", "auto-read", "task"]).approvalMode, "auto-read");
   assert.equal(parseCliArgs(["--approval=deny", "task"]).approvalMode, "deny");
+});
+
+test("parses explicit plan and build modes", () => {
+  assert.equal(parseCliArgs(["--mode", "plan", "task"]).agentMode, "plan");
+  assert.equal(parseCliArgs(["--mode=build", "task"]).agentMode, "build");
 });
 
 test("parses reproducible thinking, metrics and ephemeral options", () => {
@@ -140,6 +147,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   let selectedSession = "";
   let restoreSavedModel = true;
   let selectedThinking: string | undefined;
+  let selectedAgentMode = "";
   let prompt = "";
   let prompted = false;
   let listener: ((event: AgentSessionEvent) => void) | undefined;
@@ -154,6 +162,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
       selectedSession = options.sessionSelection.type;
       restoreSavedModel = options.restoreSavedModel;
       selectedThinking = options.thinkingLevel;
+      selectedAgentMode = options.toolPolicy.agentMode;
       return {
         session: {
           subscribe: (nextListener) => {
@@ -212,6 +221,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(selectedSession, "new");
   assert.equal(restoreSavedModel, false);
   assert.equal(selectedThinking, "max");
+  assert.equal(selectedAgentMode, "build");
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);
@@ -300,10 +310,11 @@ test("runCli enters interactive mode only when no task and a TTY are available",
     createSession: async () => {
       throw new Error("one-shot session should not be created");
     },
-    runInteractive: async ({ model, approvalMode }) => {
+    runInteractive: async ({ model, approvalMode, agentMode }) => {
       started = true;
       assert.equal(model.id, "deepseek-v4-flash");
       assert.equal(approvalMode, "ask");
+      assert.equal(agentMode, "build");
     },
     getGitStatus: async () => ({ available: false, status: "" }),
   };

@@ -33,6 +33,7 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 | `SessionManager.inMemory()` | 保留 | M3 多轮仍使用内存会话 |
 | `AgentSession.prompt/steer/abort` | 保留 | M3 复用多轮、排队和取消语义 |
 | `AgentSession.setModel/setThinkingLevel/getSessionStats` | 保留 | M3 命令和状态栏直接复用 |
+| `AgentSession.getActiveToolNames/setActiveToolsByName` | 0.80.7 类型、安装后实现和 Pi 源码已核对 | M6 Plan/Build 空闲热切换；Pi 重建 System Prompt，下一轮生效 |
 | `TUI/ProcessTerminal/Editor/Markdown` | 0.80.7 类型与真实终端已验证 | M3 不复制输入编辑和差分刷新 |
 | `ResourceLoader.getSkills/getPrompts/getAgentsFiles` | 0.80.7 类型和真实 loader 已验证 | M4 直接展示运行时资源快照 |
 | `DefaultResourceLoader` overrides | skills/prompts/agentsFiles override 已验证 | 临时过滤项目资源，不复制扫描逻辑 |
@@ -72,11 +73,13 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 
 ## 5. 验证记录
 
-2026-07-16（只读仓库发现工具）：
+2026-07-16（Plan/Build 与只读仓库发现工具）：
 
 | 验证 | 结果 |
 |---|---|
-| `npm run check` / `npm test` | 通过；49/49，不调用真实 API |
+| `npm run check` / `npm test` | 通过；52/52，不调用真实 API |
+| Plan/Build | CLI/TUI、活动工具重建、策略二次阻断和模式组合测试通过 |
+| DeepSeek Flash Plan Smoke | ephemeral Session 中 ls Tool Call/Result 成功；无修改工具事件，工作区不变 |
 | Pi ls/grep | 临时目录真实执行通过；工作区路径与 symlink 边界通过 |
 | Pi find | 真实 Smoke 暴露本机缺少 fd，未进入默认工具集合 |
 | DeepSeek Flash/high | auto-read 下实际调用 ls 与 grep 成功 |

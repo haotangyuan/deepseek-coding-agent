@@ -27,7 +27,7 @@ import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./comp
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
-import type { ApprovalMode, ApprovalRequest } from "./tool-policy.ts";
+import { AGENT_MODES, type AgentMode, type ApprovalMode, type ApprovalRequest } from "./tool-policy.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
 type ThinkingLevel = AgentSession["thinkingLevel"];
@@ -57,17 +57,19 @@ export interface InteractiveModeOptions {
   modelRegistry: ModelRegistry;
   cwd: string;
   approvalMode: ApprovalMode;
+  agentMode: AgentMode;
   sessionControls: SessionControls;
   terminal?: Terminal;
   clearContext(): void;
   getContextSnapshot(): ContextSnapshot;
   setProjectResourcesEnabled(enabled: boolean): Promise<void>;
+  setAgentMode(mode: AgentMode): void;
   getGitStatus(cwd: string): Promise<{ available: boolean; status: string }>;
 }
 
 export type InteractiveCommand =
   | { name: "help" | "status" | "cache" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
-  | { name: "model" | "thinking" | "resources" | "name" | "compact" | "tree" | "fork"; argument: string }
+  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -163,8 +165,8 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
       argument,
     };
   }
-  if (["model", "thinking", "resources", "name", "compact", "tree", "fork"].includes(name)) {
-    return { name: name as "model" | "thinking" | "resources" | "name" | "compact" | "tree" | "fork", argument };
+  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork"].includes(name)) {
+    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork", argument };
   }
   return { name: "unknown", argument: name };
 }
@@ -293,11 +295,13 @@ export class InteractiveMode {
   private mutatingToolSucceeded = false;
   private readonly completionEvidence: CompletionEvidenceCollector;
   private readonly cacheInspector = new CacheInspector();
+  private agentMode: AgentMode;
   private unsubscribe: (() => void) | undefined;
 
   constructor(options: InteractiveModeOptions) {
     this.options = options;
     this.session = options.session;
+    this.agentMode = options.agentMode;
     this.completionEvidence = new CompletionEvidenceCollector(options.cwd);
     this.tui = new TUI(options.terminal ?? new ProcessTerminal());
     this.status = new StatusLine("");
@@ -319,6 +323,7 @@ export class InteractiveMode {
     this.unsubscribe = this.session.subscribe((event) => this.handleEvent(event));
     this.addSystem(`workspace ${this.options.cwd}`);
     this.addSystem(`approval ${this.options.approvalMode}`);
+    this.addSystem(`agent mode ${this.agentMode}`);
     const session = this.options.sessionControls.snapshot();
     this.addSystem(`session ${session.id} · ${session.persisted ? "persisted" : "memory"}`);
     this.addSystem("project context and tool approval are independent boundaries");
@@ -396,7 +401,7 @@ export class InteractiveMode {
     this.header.setText(`${colors.ocean("◆")} ${colors.ice(colors.bold("DEEPSEEK CODE"))}`);
     this.subheader.setText(
       colors.dim(
-        `${modelLabel} · THINKING ${this.session.thinkingLevel.toUpperCase()} · ${this.options.approvalMode.toUpperCase()} · PROJECT CONTEXT ${context.projectResourcesEnabled ? "ON" : "OFF"}`,
+        `${modelLabel} · ${this.agentMode.toUpperCase()} · THINKING ${this.session.thinkingLevel.toUpperCase()} · ${this.options.approvalMode.toUpperCase()} · PROJECT CONTEXT ${context.projectResourcesEnabled ? "ON" : "OFF"}`,
       ),
     );
     this.tui.requestRender();
@@ -468,13 +473,13 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /cache /session /sessions /name [title] /compact [instructions] /tree [entry] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /cache /session /sessions /name [title] /compact [instructions] /tree [entry] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
       const context = this.options.getContextSnapshot();
       this.addSystem(
-        `model=${this.session.model?.id ?? "none"} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} session=${stats.sessionId} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
+        `model=${this.session.model?.id ?? "none"} mode=${this.agentMode} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} session=${stats.sessionId} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
       );
     } else if (command.name === "cache") {
       this.showCacheReport(this.cacheInspector.current(this.session.getSessionStats()));
@@ -505,6 +510,8 @@ export class InteractiveMode {
       this.addSystem(`Prompt templates (${snapshot.prompts.length})\n${formatResourceItems(snapshot.prompts, this.options.cwd)}`);
     } else if (command.name === "resources") {
       await this.handleResourcesCommand(command.argument);
+    } else if (command.name === "mode") {
+      this.handleModeCommand(command.argument);
     } else if (command.name === "reasoning") {
       this.showReasoning = !this.showReasoning;
       this.refreshReasoning();
@@ -677,6 +684,7 @@ export class InteractiveMode {
         `  Diagnostics              ${diagnosticSummary}`,
         `  Project resources        ${snapshot.projectResourcesEnabled ? "enabled" : "disabled"}`,
         `  Tool approval            ${this.options.approvalMode} (independent from context trust)`,
+        `  Agent mode               ${this.agentMode} (plan exposes read-only tools)`,
       ].join("\n"),
     );
   }
@@ -732,6 +740,33 @@ export class InteractiveMode {
       this.addSystem(`model changed to ${DEEPSEEK_PROVIDER}/${model.id}`);
     } catch (error) {
       this.addError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private handleModeCommand(mode: string): void {
+    if (!mode) {
+      this.addSystem(`mode=${this.agentMode}; available: ${AGENT_MODES.join(", ")}`);
+      return;
+    }
+    if (!AGENT_MODES.includes(mode as AgentMode)) {
+      this.addError(`invalid agent mode: ${mode}; available: ${AGENT_MODES.join(", ")}`);
+      return;
+    }
+    if (!this.session.isIdle || this.pendingApproval || this.options.sessionControls.snapshot().compacting) {
+      this.addError("agent mode cannot be changed during an active operation");
+      return;
+    }
+    const nextMode = mode as AgentMode;
+    if (nextMode === this.agentMode) {
+      this.addSystem(`agent mode already ${nextMode}`);
+      return;
+    }
+    try {
+      this.options.setAgentMode(nextMode);
+      this.agentMode = nextMode;
+      this.addSystem(`agent mode changed to ${nextMode}; active tools: ${this.session.getActiveToolNames().join(", ") || "none"}`);
+    } catch (error) {
+      this.addError(`agent mode change failed: ${sanitizeError(error)}`);
     }
   }
 

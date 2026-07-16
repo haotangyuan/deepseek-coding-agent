@@ -23,7 +23,7 @@
 | LSP/diagnostics | 当前没有 | P2；先从 TypeScript/Python diagnostics 的只读、显式命令开始，不先做通用 LSP 平台 |
 | 修改后 diff/test completion gate | 已完成 settled 时 Completion Evidence，记录 write/edit、实际 diff、识别检查和错误事实 | 观察型 P1 已落地；是否升级为强制 Gate 必须由真实遗漏率数据决定 |
 | Cache Inspector | 已完成本轮/Session hit、miss、rate、`/cache` 和足量轮次 20pp 下降提示 | P1 已落地；保持事实型观测，不猜测具体失效原因 |
-| Plan/Build | `auto-read` 接近只读能力，但不是显式会话状态 | P1；通过真实工具 allowlist 实现，不只靠 Prompt |
+| Plan/Build | 已有显式 CLI/TUI 状态；Plan 只暴露 read/ls/grep，Build 恢复审批控制工具 | P1 已落地；保持非持久、空闲切换，不把 Prompt 当权限边界 |
 | Flash/Pro 自动路由 | 当前显式手动选择，避免付费升级惊喜 | 暂缓自动路由；先有分阶段任务数据，再考虑在清晰边界切换 |
 | Tool Call repair | Pi Schema 错误会回填模型；尚无确定性 JSON 修复层 | 继续采集失败样本；默认不偷偷猜参数 |
 | 权限规则与敏感文件 | 已有 workspace/symlink、三种模式和危险 Bash 阻断；尚无通用 pattern rule/OS sandbox | P1/P2；先保护敏感路径并做命令模式授权，沙箱独立演进 |
@@ -46,13 +46,19 @@
 
 `repair-feedback` 三次重复全部成功，工具错误为 0，平均单样本成本约 `$0.000656`。它支持“短而可行动的验证反馈优于原始 TAP 倾倒”这一局部结论，但不能替代更异质的真实仓库任务。
 
+### Plan/Build 工具边界
+
+- `--mode plan` 和 TUI `/mode plan` 都把下一轮活动工具固定为 read/ls/grep。
+- TUI 通过 Pi `setActiveToolsByName()` 热切换，Pi 同步重建工具相关 System Prompt。
+- ToolPolicy 保留第二道阻断，即使绕过模型可见列表直接提交 write/edit/bash，也不会进入审批或执行。
+- Build 不等于自动执行；仍由 `ask/auto-read/deny` 决定授权。
+
 ## 4. 下一步顺序
 
-1. **Plan/Build：** 在工具层切换只读与可修改集合，明确用户确认边界。
-2. **敏感路径规则：** 在现有工作区边界上增加 `.env`、凭据和外部目录的显式策略。
-3. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
-4. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
-5. **Cache 实验：** 用固定前缀的冷/热重复任务验证自然命中波动，不把单次 Inspector 告警当成因果结论。
+1. **敏感路径规则：** 在现有工作区边界上增加 `.env`、凭据和外部目录的显式策略。
+2. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
+3. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
+4. **Cache 实验：** 用固定前缀的冷/热重复任务验证自然命中波动，不把单次 Inspector 告警当成因果结论。
 
 apply_patch、LSP、自动路由和子 Agent 只有在上述闭环有数据后再进入实现，避免把项目做成功能堆叠。
 

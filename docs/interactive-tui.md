@@ -3,7 +3,7 @@
 > 实现版本：M3–M6
 > Pi SDK / TUI：`0.80.7`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
-> 最近验证：2026-07-15
+> 最近验证：2026-07-16
 
 ## 1. 目标与非目标
 
@@ -93,7 +93,7 @@ transcript 只保存当前进程内的展示组件：
 | 命令 | 行为 |
 |---|---|
 | `/help` | 显示命令列表 |
-| `/status` | 显示模型、thinking、审批、消息和 token |
+| `/status` | 显示模型、Agent 模式、thinking、审批、消息和 token |
 | `/cache` | 显示最近一轮与当前 Session 的 DeepSeek cache hit/miss/rate |
 | `/session` | 显示当前 ID、标题、文件、cwd、模型、消息和 Compaction 状态 |
 | `/sessions` | 显示当前工作区最近会话，星号标记当前会话 |
@@ -103,6 +103,7 @@ transcript 只保存当前进程内的展示组件：
 | `/fork <entry-id>` | 从已完成的节点创建单分支 JSONL |
 | `/clone` | 复制当前完整 JSONL 树 |
 | `/model [id]` | 列出或切换已认证 DeepSeek 模型 |
+| `/mode [plan\|build]` | 查看或在空闲时切换只读 Plan / 可修改 Build 工具集合 |
 | `/thinking [level]` | 查看或设置当前模型支持的 thinking level |
 | `/reasoning` | 展开或折叠当前 transcript 中的 reasoning |
 | `/context` | 显示有效 System Prompt 大小、工具和资源摘要 |
@@ -114,6 +115,8 @@ transcript 只保存当前进程内的展示组件：
 | `/exit` | 取消活动运行后安全退出 |
 
 `/model` 继续通过 DeepSeek-only resolver，不能切换到 OpenAI、Anthropic 或其他 Provider。
+
+`/mode` 调用产品策略与 Pi `AgentSession.setActiveToolsByName()`：Plan 只保留 read/ls/grep，Build 恢复审批模式允许的集合。切换会让 Pi 重建 System Prompt，并从下一轮生效；活动请求、Compaction 和审批等待期间拒绝切换。
 
 未知斜杠命令会先与当前 ResourceLoader 的 `/skill:name` 和 Prompt Template `/name` 匹配；命中后原样交给 Pi 展开。只有未命中资源时才显示 unknown command。
 
@@ -133,6 +136,7 @@ TUI 启动前创建 M2 ToolPolicy，审批回调在 InteractiveMode 创建后绑
 - Provider 错误分类、自动重试 recovered/exhausted 卡片。
 - write 审批接受。
 - DeepSeek 模型与 thinking 切换。
+- Plan/Build 热切换后活动工具集合同步变化。
 - 活动请求 steering 和 Ctrl+C abort。
 - 取消后显示 Session ready，失败或取消不会让状态栏永久停在 error/cancelling。
 - `/clear` 与 `/exit`。
