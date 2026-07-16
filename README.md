@@ -214,7 +214,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 

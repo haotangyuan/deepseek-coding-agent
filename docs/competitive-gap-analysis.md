@@ -1,15 +1,15 @@
 # DeepSeek Coding Agent 能力差距与改进顺序
 
 > 最近核对：2026-07-16
-> 项目提交基线：`0d979c3`
+> 项目提交基线：`b0750de88279df16db908c9261bbd9160da5fb6c`
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > Pi SDK：`@earendil-works/pi-coding-agent@0.80.7`
 
 ## 1. 目的
 
-本文把“怎样接近 Claude Code、OpenCode 接 DeepSeek 的水平”转成当前仓库可验证的工程缺口。判断依据依次是本项目源码、安装后的 Pi SDK 类型、相邻 Pi 源码、DeepSeek 官方文档，以及 Claude Code/OpenCode 官方能力边界。
+本文把 Claude Code、Codex CLI、OpenCode 中值得学习的产品做法转成当前仓库可验证的工程缺口。判断依据依次是本项目源码、安装后的 Pi SDK 类型、相邻 Pi 源码、DeepSeek 官方文档和参考产品官方能力边界。
 
-比较目标不是功能数量，而是同一 DeepSeek 模型下的任务完成率、工具有效率、用户干预、缓存命中和成功任务成本。
+目标不是适配或追平其他 Agent 的功能数量，而是提升本项目自己的任务完成率、工具有效率、用户干预、缓存命中和成功任务成本。新的当前状态和实施顺序以 `docs/product-status-and-evolution.md` 为准。
 
 ## 2. 建议审计矩阵
 
@@ -29,7 +29,7 @@
 | 权限规则与敏感文件 | 已有 workspace/symlink、三种审批模式、Plan/Build、敏感路径拒绝、危险 Bash 阻断和进程内精确命令授权 | P1 已落地；通配符规则与 OS sandbox 不在当前授权中伪实现 |
 | 自动项目记忆 | 已有 AGENTS/Skills/Session/Compaction，没有自动写长期记忆 | 延后；自动记忆会引入陈旧上下文和前缀漂移 |
 | 多 Agent/Explore 子 Agent | 当前没有，路线图明确 deferred | 单 Agent 闭环和评测稳定前不做 |
-| 大型 competitor benchmark | 当前 6 个固定任务，缺 Claude Code/OpenCode 同模型矩阵 | M7；先扩充异质任务，再做同模型、同仓库、同预算对照 |
+| 本项目真实任务评测 | 当前 7 个固定任务，覆盖协议、单/多文件、反馈恢复和配置解析 | 持续扩充异质任务，只衡量本项目自己的版本、prompt、工具和模型策略迭代 |
 
 ## 3. 本轮落地与证据
 
@@ -67,10 +67,10 @@
 
 ## 4. 下一步顺序
 
-1. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
-2. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
-3. **Cache 实验：** 用固定前缀的冷/热重复任务验证自然命中波动，不把单次 Inspector 告警当成因果结论。
-4. **诊断工具：** 从 TypeScript/Python 的显式只读 diagnostics 开始评估，不先搭通用 LSP 平台。
+1. **环境与兼容诊断：** 建立 Doctor 和 Pi 发布版升级门，避免运行时才发现 Key、工具依赖或 SDK 漂移。
+2. **TUI 高频交互：** 命令/文件补全、Session/Tree 选择器和可展开工具卡。
+3. **本轮 Diff/Undo：** 为 write/edit 建立冲突安全的文件 checkpoint，不伪装成完整系统回滚。
+4. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再提供用户显式触发的 verify/diff/undo 闭环。
 
 apply_patch、LSP、自动路由和子 Agent 只有在上述闭环有数据后再进入实现，避免把项目做成功能堆叠。
 

@@ -10,8 +10,9 @@
 > Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
 > 当前项目依赖：`@earendil-works/pi-coding-agent@0.80.7`
 > 最近验证的 Pi 发布版：`0.80.7`
-> DeepSeek 官方文档核对日期：2026-07-15
+> DeepSeek 官方文档核对日期：2026-07-16
 > 当前评测开发起点：`5d3007d`
+> 当前能力与近期实施顺序：`docs/product-status-and-evolution.md`
 
 ## 1. 项目定位
 
@@ -124,7 +125,7 @@ flowchart TB
 
 ## 5. 开发顺序判断
 
-近期顺序确定为：
+最初建设顺序为：
 
 ```text
 依赖基线 → 工具安全 → 交互体验 → 上下文透明 → 持久会话
@@ -132,6 +133,15 @@ flowchart TB
 ```
 
 工具安全必须先于完整 TUI。当前 Pi 工具继承本机进程权限，如果先增加长时间交互而没有审批和工作区边界，会放大误操作风险。
+
+M1–M5 完成后，近期日用优化顺序调整为：
+
+```text
+Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
+              → 显式验证闭环 → DeepSeek 量化优化
+```
+
+详细能力盘点、体验判断和每阶段验收见 `docs/product-status-and-evolution.md`。
 
 ## 6. 里程碑路线
 
@@ -447,8 +457,10 @@ npm test
 |---|---|---|
 | Done | M5 Session/Compaction | 已完成持久化、恢复、树和压缩命令 |
 | Done | M4 上下文透明化 | 已完成真实资源可见性与临时过滤 |
-| P0 | M6 DeepSeek 量化优化 | 评测基线完成，继续做可回滚优化实验 |
-| P2 | M7 演示材料与稳定性 | 面向 GitHub 和面试展示 |
+| P0 | Doctor 与 Pi 兼容门 | 先消除本地启动、依赖和 SDK 漂移的不确定性 |
+| P0 | TUI 导航、Diff 与 Undo | 直接降低日常输入、审阅和误修改恢复成本 |
+| P1 | 显式验证闭环与 DeepSeek 优化 | 在可逆修改基础上提升完成率、缓存和成本表现 |
+| P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
 ## 11. 持续维护规则
@@ -505,9 +517,11 @@ npm test
 | D-032 | 敏感路径默认拒绝，公开配置模板显式放行 | 已采纳 | 优先防止凭据进入模型上下文；保留 `.env.example/.sample/.template` 的正常开发流程，不夸大 Bash 字面量检测 |
 | D-033 | Session Bash 授权只匹配完整命令且不持久化 | 已采纳 | 降低重复审批摩擦，同时避免通配符误放行、跨会话陈旧授权和修改工具批量授权 |
 | D-034 | 竞品只作为设计参考，不建设其他 Agent 适配器或排行榜 | 已采纳 | 开发资源集中于 DeepSeek Coding Agent 自身的体验、可靠性和可量化迭代 |
+| D-035 | 本地日用体验优先于新增能力数量和面试展示 | 已采纳 | Doctor、导航、Diff/Undo 和验证闭环比 MCP、多 Agent 或更多工具更直接改善真实使用 |
 
 ### 更新日志
 
+- **2026-07-16：** 收敛当前能力并重排后续优先级。新增 `product-status-and-evolution.md`，近期按 Doctor/兼容门、TUI 导航、本轮 Diff/Undo、显式验证闭环推进；记录 Pi 上游 model runtime 重构风险，不盲目依赖未发布 `main`。
 - **2026-07-16：** 收紧产品边界：删除跨 Agent 导入与比较入口；Claude Code、Codex CLI、OpenCode 只作为设计参考，评测专注本项目自身版本、prompt、工具和模型策略迭代。
 - **2026-07-16：** 完成评测 Schema v3。逻辑样本累计多轮 repair 延迟/工具/Provider 指标，汇总新增按任务通过率、P50/P95、成本与错误率；增加配置解析异质任务，56/56 自动化测试与真实 Flash repair-config Smoke 通过。
 - **2026-07-16：** 完成进程内精确 Bash 授权。审批支持 allow-once / allow-session / deny；仅完全相同命令复用，危险/敏感检查不可绕过，55/55 自动化测试与真实 Flash 非 TTY 拒绝 Smoke 通过。
