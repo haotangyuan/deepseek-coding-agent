@@ -22,7 +22,7 @@
 | apply_patch | Pi 当前默认是精确 edit/write，没有 apply_patch | 先收集 edit 失败样本；没有数据前不新增第二套修改语义 |
 | LSP/diagnostics | 当前没有 | P2；先从 TypeScript/Python diagnostics 的只读、显式命令开始，不先做通用 LSP 平台 |
 | 修改后 diff/test completion gate | 已完成 settled 时 Completion Evidence，记录 write/edit、实际 diff、识别检查和错误事实 | 观察型 P1 已落地；是否升级为强制 Gate 必须由真实遗漏率数据决定 |
-| Cache Inspector | metrics 已有 cacheRead 与命中率，TUI 无逐轮诊断 | P1；增加逐轮/会话命中、显著下降提示，但不猜测具体失效原因 |
+| Cache Inspector | 已完成本轮/Session hit、miss、rate、`/cache` 和足量轮次 20pp 下降提示 | P1 已落地；保持事实型观测，不猜测具体失效原因 |
 | Plan/Build | `auto-read` 接近只读能力，但不是显式会话状态 | P1；通过真实工具 allowlist 实现，不只靠 Prompt |
 | Flash/Pro 自动路由 | 当前显式手动选择，避免付费升级惊喜 | 暂缓自动路由；先有分阶段任务数据，再考虑在清晰边界切换 |
 | Tool Call repair | Pi Schema 错误会回填模型；尚无确定性 JSON 修复层 | 继续采集失败样本；默认不偷偷猜参数 |
@@ -48,11 +48,11 @@
 
 ## 4. 下一步顺序
 
-1. **Cache Inspector：** TUI 展示逐轮与会话 cache hit/miss，并对显著下降给出事实型提示。
-2. **Plan/Build：** 在工具层切换只读与可修改集合，明确用户确认边界。
-3. **敏感路径规则：** 在现有工作区边界上增加 `.env`、凭据和外部目录的显式策略。
-4. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
-5. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
+1. **Plan/Build：** 在工具层切换只读与可修改集合，明确用户确认边界。
+2. **敏感路径规则：** 在现有工作区边界上增加 `.env`、凭据和外部目录的显式策略。
+3. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
+4. **Completion Gate 评估：** 先统计 Evidence 中缺少 diff/验证的比例，再决定是否增加可配置阻断或模型反馈。
+5. **Cache 实验：** 用固定前缀的冷/热重复任务验证自然命中波动，不把单次 Inspector 告警当成因果结论。
 
 apply_patch、LSP、自动路由和子 Agent 只有在上述闭环有数据后再进入实现，避免把项目做成功能堆叠。
 

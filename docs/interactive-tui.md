@@ -71,6 +71,7 @@ transcript 只保存当前进程内的展示组件：
 - tool running/done/failed 卡片；失败结果明确说明已回填 Agent Loop。
 - approval waiting/approved/rejected 卡片。
 - 系统、重试、错误和 Git 状态。Provider 错误卡显示分类、HTTP 状态（若有）、脱敏详情和下一步动作；自动重试结束后原地变为 recovered/exhausted 状态。
+- Cache Inspector 卡显示本轮与 Session 累计 hit/miss/rate；显著下降只报告实际百分点。
 
 错误与恢复卡由宽度感知组件渲染，正文和动作各最多两行；在 80 列终端中保持紧凑，超长脱敏详情显示省略号。卡片只解释 Pi 事件，不创建第二套重试状态机。
 
@@ -93,6 +94,7 @@ transcript 只保存当前进程内的展示组件：
 |---|---|
 | `/help` | 显示命令列表 |
 | `/status` | 显示模型、thinking、审批、消息和 token |
+| `/cache` | 显示最近一轮与当前 Session 的 DeepSeek cache hit/miss/rate |
 | `/session` | 显示当前 ID、标题、文件、cwd、模型、消息和 Compaction 状态 |
 | `/sessions` | 显示当前工作区最近会话，星号标记当前会话 |
 | `/name <title>` | 设置并持久化会话标题 |

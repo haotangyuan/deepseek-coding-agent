@@ -239,6 +239,7 @@ test("parses supported interactive commands without treating normal prompts as c
   assert.equal(parseInteractiveCommand("hello"), undefined);
   assert.deepEqual(parseInteractiveCommand("/model deepseek-v4-pro"), { name: "model", argument: "deepseek-v4-pro" });
   assert.deepEqual(parseInteractiveCommand("/thinking high"), { name: "thinking", argument: "high" });
+  assert.deepEqual(parseInteractiveCommand("/cache"), { name: "cache", argument: "" });
   assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
 });
 
@@ -277,12 +278,17 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   await flush();
 
   assert.deepEqual(session.prompts, ["first", "second", "third"]);
+  assert.match(plainTerminalOutput(terminal), /CACHE INSPECTOR.*turn hit=0 miss=1 rate=0\.0% prompt=1/s);
   assert.match(plainTerminalOutput(terminal), /\[thinking\] 12 chars/);
   assert.doesNotMatch(plainTerminalOutput(terminal), /private plan/);
 
   terminal.type("/reasoning");
   await flush();
   assert.match(plainTerminalOutput(terminal), /private plan/);
+
+  terminal.type("/cache");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /session hit=0 miss=3 rate=0\.0% prompt=3/);
 
   terminal.type("/thinking low");
   await flush();

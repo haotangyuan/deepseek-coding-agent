@@ -26,6 +26,7 @@ import {
   sanitizeError,
   usage,
 } from "./cli.ts";
+import { CacheInspector, formatCacheReport } from "./cache-inspector.ts";
 import {
   captureContextSnapshot,
   createProjectResourceFilter,
@@ -303,8 +304,10 @@ export async function runCli(
   let mutatingToolSucceeded = false;
   let metrics: EvaluationMetricsCollector | undefined;
   const evidence = new CompletionEvidenceCollector(dependencies.cwd);
+  const cacheInspector = new CacheInspector();
   let metricsWritten = false;
   let evidenceWritten = false;
+  let cacheWritten = false;
   let abortListener: (() => void) | undefined;
   const writeMetrics = (success: boolean): void => {
     if (!parsed.metrics || !metrics || !session || metricsWritten) return;
@@ -318,6 +321,13 @@ export async function runCli(
     io.stderr(`[evidence]\n${sanitizeError(summary.detail)}\n`);
     if (summary.attention.length > 0) io.stderr(`[evidence:attention] ${sanitizeError(summary.attention.join("; "))}\n`);
     evidenceWritten = true;
+  };
+  const writeCache = (): void => {
+    if (cacheWritten || !session) return;
+    const report = cacheInspector.finish(session.getSessionStats());
+    io.stderr(`[cache]\n${formatCacheReport(report)}\n`);
+    if (report.alert) io.stderr(`[cache:alert] ${report.alert}\n`);
+    cacheWritten = true;
   };
   try {
     const toolPolicy = createToolPolicy({
@@ -346,6 +356,7 @@ export async function runCli(
       runOptions.signal.addEventListener("abort", abortListener, { once: true });
     }
     metrics = new EvaluationMetricsCollector(model.id, session.thinkingLevel ?? parsed.thinkingLevel);
+    cacheInspector.begin(session.getSessionStats());
     session.subscribe((event) => {
       metrics?.observe(event);
       evidence.observe(event);
@@ -368,6 +379,7 @@ export async function runCli(
     await session.prompt(parsed.task);
     if (runOptions.signal?.aborted) throw runOptions.signal.reason;
     writeEvidence();
+    writeCache();
     writeMetrics(true);
     if (session.sessionId) {
       io.stderr(`[session] id=${session.sessionId} persisted=${session.sessionFile ? "yes" : "no"}\n`);
@@ -380,6 +392,7 @@ export async function runCli(
     return 0;
   } catch (error) {
     writeEvidence();
+    writeCache();
     writeMetrics(false);
     io.stderr(`[error] ${sanitizeError(error)}\n`);
     return 1;

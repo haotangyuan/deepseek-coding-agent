@@ -119,7 +119,7 @@ git -C <workspace> status --short
 
 ## 10. 验证记录
 
-当前自动化测试共 45 个，其中工具策略覆盖：
+当前自动化测试共 49 个，其中工具策略覆盖：
 
 - 三种模式和 read/ls/grep/write/edit/bash allowlist。
 - 工作区内读取/列目录/内容搜索、`../` 越界与 symlink 逃逸。

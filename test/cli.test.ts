@@ -141,6 +141,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   let restoreSavedModel = true;
   let selectedThinking: string | undefined;
   let prompt = "";
+  let prompted = false;
   let listener: ((event: AgentSessionEvent) => void) | undefined;
   const dependencies: CliDependencies = {
     cwd: process.cwd(),
@@ -161,6 +162,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
           },
           prompt: async (text) => {
             prompt = text;
+            prompted = true;
             listener?.({
               type: "tool_execution_start",
               toolCallId: "1",
@@ -184,8 +186,10 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
             toolCalls: 1,
             toolResults: 1,
             totalMessages: 3,
-            tokens: { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, total: 42 },
-            cost: 0.001,
+            tokens: prompted
+              ? { input: 10, output: 2, cacheRead: 30, cacheWrite: 0, total: 42 }
+              : { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            cost: prompted ? 0.001 : 0,
           }),
           dispose: () => undefined,
         },
@@ -213,6 +217,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.match(stderr.join(""), /agent:complete/);
   assert.match(stderr.join(""), /\[evidence\].*files=README\.md.*bash=0 · tool-errors=0/s);
   assert.match(stderr.join(""), /evidence:attention.*no recognized validation/s);
+  assert.match(stderr.join(""), /\[cache\].*turn hit=30 miss=10 rate=75\.0% prompt=40/s);
   assert.match(stderr.join(""), /git:status.*README\.md/s);
   assert.match(stderr.join(""), /\[metrics\].*"cacheHitRate":0\.75/);
 });

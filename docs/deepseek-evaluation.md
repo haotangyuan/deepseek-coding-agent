@@ -107,7 +107,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 | `toolCalls/successes/errors` | 工具开始及执行结果计数 | 参数解析失败可能在工具开始前失败，应结合事件序列分析 |
 | `retries/providerErrors` | Pi 自动重试和 Provider 错误事件数 | 用于判断稳定性，不记录凭据或完整响应 |
 | `providerErrorCategories` | 本项目依据官方语义归类的 Provider 错误 | 只改善诊断，不改变 Pi 的重试决策 |
-| `cacheHitRate` | `cacheRead / (input + cacheRead)` | 基于 Pi 归一化 usage；0 可能表示未命中或 Provider 未返回 |
+| `cacheHitRate` | `cacheRead / (input + cacheRead + cacheWrite)` | 基于 Pi 归一化 usage；DeepSeek 当前 cacheWrite 为 0，评测 Schema 仍以 0 表示无 prompt token |
 | `tokens/costUsd` | Pi Session 累计统计 | 成本使用当前模型 catalog 单价，价格变化后需重新核对 |
 | `eventSequence` | 去除连续重复后的事件类别，最多 64 项 | 便于检查主链路，不保存完整 reasoning 或工具内容 |
 | `attemptCount/feedbackRounds` | 一个逻辑样本实际使用的 Agent 尝试和反馈轮数 | 用于区分任务样本与 Provider 请求 |

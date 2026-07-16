@@ -76,10 +76,11 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 
 | 验证 | 结果 |
 |---|---|
-| `npm run check` / `npm test` | 通过；45/45，不调用真实 API |
+| `npm run check` / `npm test` | 通过；49/49，不调用真实 API |
 | Pi ls/grep | 临时目录真实执行通过；工作区路径与 symlink 边界通过 |
 | Pi find | 真实 Smoke 暴露本机缺少 fd，未进入默认工具集合 |
 | DeepSeek Flash/high | auto-read 下实际调用 ls 与 grep 成功 |
+| Cache Inspector | SessionStats 快照差值与真实 Flash cache usage 展示通过 |
 
 find 的失败被视为产品依赖事实，不通过测试阶段安装系统工具掩盖。
 

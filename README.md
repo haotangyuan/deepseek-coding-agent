@@ -20,6 +20,7 @@
 - 直接复用 Pi 的 read/ls/grep 做受限仓库探索；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
 - 每轮 settled 后展示 Completion Evidence：明确记录 write/edit 文件、实际 diff 查看、可识别验证结果和错误事实；不自动追加付费模型轮次，也不把未知命令猜成测试。
+- Cache Inspector 展示本轮和 Session 累计 cache hit/miss/rate；`/cache` 可随时重看，只有相邻足量轮次下降至少 20pp 才提示事实型告警。
 - 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消；Provider/工具失败、自动重试和取消使用 80 列友好的紧凑恢复卡片。
 - 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。
 - 默认使用 Pi `SessionManager` 持久化 JSONL，支持 workspace 内 continue/resume、标题、列表、树导航、fork/clone 和自动/手动 Compaction。
@@ -66,6 +67,7 @@ npm start
 ```text
 /help
 /status
+/cache
 /session
 /sessions
 /name [title]
@@ -86,6 +88,8 @@ npm start
 ```
 
 Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steering 排队；Ctrl+C 取消当前运行，空闲时连续两次 Ctrl+C 退出。reasoning 默认只显示长度，通过 `/reasoning` 展开或重新折叠。
+
+`/cache` 直接读取 Pi 已归一化的 DeepSeek usage：本轮通过提交前后 SessionStats 做差，Session 数值包含 JSONL 全历史的实际计费 usage。它不会为了诊断缓存再发送请求，也不会猜测命中下降原因。
 
 `/context` 展示当前有效 System Prompt 的字符数和粗略 token、活动工具及资源数量；`/agents`、`/skills`、`/prompts` 展示真实来源路径和作用域。`/resources off` 只在当前进程内移除项目/祖先 AGENTS 和项目级 Skills/Prompts，再调用 Pi `AgentSession.reload()`；用户级资源继续保留。上下文开关不改变工具审批模式，两者是独立边界。
 

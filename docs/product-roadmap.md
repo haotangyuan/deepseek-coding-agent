@@ -332,7 +332,7 @@ flowchart TB
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测、错误诊断、测试反馈恢复、只读仓库发现和 Completion Evidence 已完成，优化实验进行中。** `repair-feedback` 三次重复均恢复，默认工具新增 Pi 原生 ls/grep；每轮 settled 现在展示 write/edit 文件、实际 diff 查看、可识别验证和错误事实，不自动增加模型轮次。详见 `docs/deepseek-evaluation.md`、`docs/competitive-gap-analysis.md` 和 `docs/completion-evidence.md`。
+当前进展（2026-07-16）：**评测、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence 和 Cache Inspector 已完成，优化实验进行中。** 每轮 settled 现在同时展示完成证据与本轮/Session cache hit、miss、rate；`/cache` 可按需查看，足量相邻轮次下降 20pp 才提示且不猜原因。详见 `docs/deepseek-evaluation.md`、`docs/completion-evidence.md` 和 `docs/cache-inspector.md`。
 
 实验方向：
 
@@ -500,9 +500,11 @@ npm test
 | D-027 | TUI 只解释 Pi 重试事件并显示恢复卡 | 已采纳 | 保持 AgentSession 为唯一重试状态机，同时让错误、恢复与下一步动作在 80 列下可理解 |
 | D-028 | 优先复用 Pi 原生 ls/grep，find 通过依赖门槛后再开放 | 已采纳 | 提高 DeepSeek 仓库探索信息密度；不复制搜索实现，也不让缺少 fd 的工具进入默认稳定前缀 |
 | D-029 | Completion Evidence 先观察，不自动续跑或强制阻断 | 已采纳 | 用 settled 事件呈现真实修改、diff、验证和错误证据；避免隐藏成本及不可靠完成判断 |
+| D-030 | Cache Inspector 只消费 Pi 累计 usage 并使用快照差值 | 已采纳 | 不重复解析 Provider；0 token 显示 n/a，足量相邻轮次下降 20pp 才做事实型提示 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成 Cache Inspector。本轮/Session cache hit、miss、rate 与 `/cache` 已接入 CLI/TUI；49/49 测试与真实 Flash usage Smoke 通过，下降提示有 100 token 和 20pp 门槛，不触发额外请求或猜测原因。
 - **2026-07-16：** 完成 Completion Evidence。CLI/TUI 在 settled 后显示 write/edit 文件、实际 diff、识别验证和错误事实；45/45 测试及真实 Flash 只读 Smoke 通过，组合命令失败保持保守语义，不触发额外模型调用。
 - **2026-07-16：** 审计 Claude Code/OpenCode/DeepSeek-native 建议并形成差距矩阵；默认工具新增 Pi ls/grep，find 因 fd 依赖 Smoke 失败暂缓；`repair-feedback` 三次重复全部恢复且工具错误为 0。
 - **2026-07-15：** 完成 TUI 错误恢复卡。工具失败明确回填边界，Provider 错误显示分类与动作，自动重试展示 recovered/exhausted，取消后明确回到 Session ready；80×24 事件替身覆盖成功和失败路径。

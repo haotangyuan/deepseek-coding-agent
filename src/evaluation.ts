@@ -85,7 +85,7 @@ export class EvaluationMetricsCollector {
   }
 
   finish(stats: SessionStats, success: boolean): EvaluationMetrics {
-    const promptTokens = stats.tokens.input + stats.tokens.cacheRead;
+    const promptTokens = stats.tokens.input + stats.tokens.cacheRead + stats.tokens.cacheWrite;
     return {
       schemaVersion: 1,
       model: this.model,
