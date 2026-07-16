@@ -9,11 +9,12 @@ import { promisify } from "node:util";
 import type { EvaluationMetrics } from "./evaluation.ts";
 import { DEFAULT_MODEL_ID, sanitizeError, THINKING_LEVELS, type DeepSeekThinkingLevel } from "./cli.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
+import { summarizeEvalTasks, type ComparableEvalResult, type EvalTaskKind, type EvalTaskPlan, type EvalTaskSummary } from "./eval-report.ts";
 import { runCli } from "./main.ts";
 
 interface EvalTask {
   id: string;
-  kind: "protocol" | "repair";
+  kind: EvalTaskKind;
   approval: "deny" | "auto-read" | "ask";
   prompt: string;
   expected: string;
@@ -37,18 +38,15 @@ export interface RepairFixture {
   protectedFiles: string[];
 }
 
-interface EvalResult extends Record<string, unknown> {
-  type: "eval_result";
-  schemaVersion: 2;
-  passed: boolean;
+interface EvalResult extends ComparableEvalResult, Record<string, unknown> {
   metrics?: EvaluationMetrics;
-  costUsd?: number;
-  attemptCount?: number;
 }
 
 export interface EvalSummary {
   type: "eval_summary";
-  schemaVersion: 2;
+  schemaVersion: 3;
+  suite: "deepseek-code-v1";
+  agent: "deepseek-code";
   passed: boolean;
   plannedSamples: number;
   completedSamples: number;
@@ -59,6 +57,7 @@ export interface EvalSummary {
   budgetExceeded: boolean;
   providerRequests: number;
   maxProviderRequests: number;
+  tasks: EvalTaskSummary[];
   stoppedReason?: "cost_limit";
 }
 
@@ -97,6 +96,7 @@ interface TestRun {
 
 const DEFAULT_MAX_COST_USD = 0.02;
 const REPAIR_ATTEMPT_TIMEOUT_MS = 60_000;
+const EVAL_SUITE = "deepseek-code-v1";
 
 const TASKS: EvalTask[] = [
   {
@@ -147,6 +147,14 @@ const TASKS: EvalTask[] = [
     requiredToolResult: "success",
     maxAttempts: 2,
   },
+  {
+    id: "repair-config",
+    kind: "repair",
+    approval: "ask",
+    prompt: "Read src/config.mjs and test/config.test.mjs. Fix only src/config.mjs so it ignores blank and comment lines, trims keys and values, and preserves equals signs inside values. Do not run shell commands because the evaluator will run the tests. Reply with exactly FIXED after editing.",
+    expected: "FIXED",
+    requiredToolResult: "success",
+  },
 ];
 
 const REPAIR_SOURCE = `export function add(left, right) {\n  return left - right;\n}\n`;
@@ -155,6 +163,8 @@ const CART_SOURCE = `export function subtotal(items) {\n  return items.reduce((s
 const DISCOUNT_SOURCE = `export function applyDiscount(total, percent) {\n  return total * (1 - percent / 10);\n}\n`;
 const CHECKOUT_SOURCE = `import { subtotal } from "./cart.mjs";\nimport { applyDiscount } from "./discount.mjs";\n\nexport function checkout(items, discountPercent) {\n  return applyDiscount(subtotal(items), discountPercent);\n}\n`;
 const CHECKOUT_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { subtotal } from "../src/cart.mjs";\nimport { applyDiscount } from "../src/discount.mjs";\nimport { checkout } from "../src/index.mjs";\n\ntest("subtotal includes item quantities", () => {\n  assert.equal(subtotal([{ price: 12, quantity: 2 }, { price: 5, quantity: 3 }]), 39);\n});\n\ntest("discount percent is divided by one hundred", () => {\n  assert.equal(applyDiscount(200, 15), 170);\n});\n\ntest("checkout composes subtotal and discount", () => {\n  assert.equal(checkout([{ price: 50, quantity: 2 }], 20), 80);\n});\n`;
+const CONFIG_SOURCE = `export function parseConfig(text) {\n  return Object.fromEntries(text.split("\\n").map((line) => line.split("=")));\n}\n`;
+const CONFIG_TEST = `import test from "node:test";\nimport assert from "node:assert/strict";\nimport { parseConfig } from "../src/config.mjs";\n\ntest("parses repository-style configuration", () => {\n  assert.deepEqual(parseConfig(" # local config\\n API_URL = https://example.test?a=b \\n\\nTIMEOUT=30\\n"), {\n    API_URL: "https://example.test?a=b",\n    TIMEOUT: "30",\n  });\n});\n`;
 const REPAIR_FIXTURES: Record<string, RepairFixture> = {
   "repair-js": {
     files: {
@@ -182,6 +192,14 @@ const REPAIR_FIXTURES: Record<string, RepairFixture> = {
     },
     expectedChangedFiles: ["src/cart.mjs", "src/discount.mjs"],
     protectedFiles: ["src/index.mjs"],
+  },
+  "repair-config": {
+    files: {
+      "src/config.mjs": CONFIG_SOURCE,
+      "test/config.test.mjs": CONFIG_TEST,
+    },
+    expectedChangedFiles: ["src/config.mjs"],
+    protectedFiles: ["test/config.test.mjs"],
   },
 };
 const execFileAsync = promisify(execFile);
@@ -269,12 +287,20 @@ function failedResult(options: EvalOptions, task: EvalTask, run: number, error: 
   const diagnostic = classifyDeepSeekError(sanitized);
   return {
     type: "eval_result",
-    schemaVersion: 2,
+    schemaVersion: 3,
+    suite: EVAL_SUITE,
+    agent: "deepseek-code",
     task: task.id,
+    taskKind: task.kind,
     run,
     model: options.model,
     thinking: options.thinking,
     passed: false,
+    costUsd: 0,
+    toolCalls: 0,
+    toolErrors: 0,
+    providerErrors: 0,
+    attemptCount: 1,
     error: sanitized,
     errorCategory: diagnostic.category,
     retryable: diagnostic.retryable,
@@ -299,15 +325,22 @@ async function executeProtocolTask(options: EvalOptions, task: EvalTask, run: nu
     const metrics = parseMetrics(stderr);
     return {
       type: "eval_result",
-      schemaVersion: 2,
+      schemaVersion: 3,
+      suite: EVAL_SUITE,
+      agent: "deepseek-code",
       task: task.id,
+      taskKind: task.kind,
       run,
       model: options.model,
       thinking: options.thinking,
       passed: score(task, stdout, metrics),
       output: sanitizeError(stdout.trim()).slice(0, 160),
       metrics,
+      durationMs: metrics?.durationMs,
       costUsd: metrics?.costUsd ?? 0,
+      toolCalls: metrics?.toolCalls ?? 0,
+      toolErrors: metrics?.toolErrors ?? 0,
+      providerErrors: metrics?.providerErrors ?? 0,
       attemptCount: 1,
     };
   } catch (error) {
@@ -475,8 +508,11 @@ async function executeRepairTask(
     const diagnostic = finalAttempt.error ? classifyDeepSeekError(finalAttempt.error) : undefined;
     return {
       type: "eval_result",
-      schemaVersion: 2,
+      schemaVersion: 3,
+      suite: EVAL_SUITE,
+      agent: "deepseek-code",
       task: task.id,
+      taskKind: task.kind,
       run,
       model: options.model,
       thinking: options.thinking,
@@ -484,7 +520,11 @@ async function executeRepairTask(
       output: finalAttempt.output,
       checks,
       metrics: finalAttempt.metrics,
+      durationMs: attempts.reduce((total, attempt) => total + (attempt.metrics?.durationMs ?? 0), 0),
       costUsd,
+      toolCalls: attempts.reduce((total, attempt) => total + (attempt.metrics?.toolCalls ?? 0), 0),
+      toolErrors: attempts.reduce((total, attempt) => total + (attempt.metrics?.toolErrors ?? 0), 0),
+      providerErrors: attempts.reduce((total, attempt) => total + (attempt.metrics?.providerErrors ?? 0), 0),
       attemptCount: attempts.length,
       feedbackRounds: attempts.filter((attempt) => attempt.kind === "test_feedback").length,
       attempts,
@@ -513,19 +553,22 @@ async function executeTask(options: EvalOptions, task: EvalTask, run: number, av
 }
 
 export function summarizeEval(
-  plannedSamples: number,
-  results: ReadonlyArray<{ passed: boolean; metrics?: Pick<EvaluationMetrics, "costUsd">; costUsd?: number; attemptCount?: number }>,
+  plans: ReadonlyArray<EvalTaskPlan>,
+  results: ReadonlyArray<ComparableEvalResult>,
   maxCostUsd: number,
-  maxProviderRequests: number = plannedSamples,
+  maxProviderRequests: number = plans.reduce((total, plan) => total + plan.plannedSamples, 0),
 ): EvalSummary {
+  const plannedSamples = plans.reduce((total, plan) => total + plan.plannedSamples, 0);
   const passedSamples = results.filter((result) => result.passed).length;
-  const costUsd = results.reduce((total, result) => total + (result.costUsd ?? result.metrics?.costUsd ?? 0), 0);
+  const costUsd = results.reduce((total, result) => total + (result.costUsd ?? 0), 0);
   const providerRequests = results.reduce((total, result) => total + (result.attemptCount ?? 1), 0);
   const incomplete = results.length < plannedSamples;
   const budgetExceeded = costUsd > maxCostUsd;
   return {
     type: "eval_summary",
-    schemaVersion: 2,
+    schemaVersion: 3,
+    suite: EVAL_SUITE,
+    agent: "deepseek-code",
     passed: !incomplete && !budgetExceeded && passedSamples === plannedSamples,
     plannedSamples,
     completedSamples: results.length,
@@ -536,6 +579,7 @@ export function summarizeEval(
     budgetExceeded,
     providerRequests,
     maxProviderRequests,
+    tasks: summarizeEvalTasks(plans, results),
     ...(incomplete && costUsd >= maxCostUsd ? { stoppedReason: "cost_limit" as const } : {}),
   };
 }
@@ -555,8 +599,9 @@ export async function runEval(args: string[]): Promise<number> {
   const tasks = options.task === "all" ? TASKS : TASKS.filter((task) => task.id === options.task);
   const sampleCount = tasks.length * options.runs;
   const maxProviderRequests = tasks.reduce((total, task) => total + (task.maxAttempts ?? 1), 0) * options.runs;
+  const plans: EvalTaskPlan[] = tasks.map((task) => ({ task: task.id, taskKind: task.kind, plannedSamples: options.runs }));
   if (!options.live) {
-    process.stdout.write(`${JSON.stringify({ type: "eval_plan", schemaVersion: 2, live: false, model: options.model, thinking: options.thinking, runs: options.runs, tasks: tasks.map((task) => task.id), sampleCount, maxProviderRequests, maxCostUsd: options.maxCostUsd })}\n`);
+    process.stdout.write(`${JSON.stringify({ type: "eval_plan", schemaVersion: 3, suite: EVAL_SUITE, agent: "deepseek-code", live: false, model: options.model, thinking: options.thinking, runs: options.runs, tasks: plans, sampleCount, maxProviderRequests, maxCostUsd: options.maxCostUsd })}\n`);
     return 0;
   }
   const results: EvalResult[] = [];
@@ -575,7 +620,7 @@ export async function runEval(args: string[]): Promise<number> {
     }
     if (stop) break;
   }
-  const summary = summarizeEval(sampleCount, results, options.maxCostUsd, maxProviderRequests);
+  const summary = summarizeEval(plans, results, options.maxCostUsd, maxProviderRequests);
   process.stdout.write(`${JSON.stringify(summary)}\n`);
   return summary.passed ? 0 : 1;
 }

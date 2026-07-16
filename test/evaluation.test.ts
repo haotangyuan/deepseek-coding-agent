@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AgentSessionEvent, SessionStats } from "@earendil-works/pi-coding-agent";
 import { buildRepairFeedback, parseEvalArgs, shouldRetryRepair, summarizeEval, verifyFeedbackRecovery, verifyRepairFiles } from "../src/eval.ts";
+import { compareEvalResults, parseComparableEvalResults, summarizeEvalTasks, type ComparableEvalResult } from "../src/eval-report.ts";
 import { EvaluationMetricsCollector } from "../src/evaluation.ts";
 
 const partial = {
@@ -29,6 +30,7 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
   assert.equal(parseEvalArgs(["--task", "repair-js"]).task, "repair-js");
   assert.equal(parseEvalArgs(["--task", "repair-multi-file", "--max-cost-usd=0.5"]).maxCostUsd, 0.5);
   assert.equal(parseEvalArgs(["--task", "repair-feedback"]).task, "repair-feedback");
+  assert.equal(parseEvalArgs(["--task", "repair-config"]).task, "repair-config");
   assert.throws(() => parseEvalArgs(["--model", "openai/gpt-5"]), /only allows the deepseek provider/i);
   assert.throws(() => parseEvalArgs(["--model", "deepseek/"]), /Model ID cannot be empty/);
   assert.throws(() => parseEvalArgs(["--thinking", "medium"]), /Invalid thinking level/);
@@ -99,10 +101,17 @@ test("repair verification requires every expected edit and preserves protected f
 });
 
 test("evaluation summary reports pass, cost, and budget stop", () => {
-  const passed = { type: "eval_result", schemaVersion: 2, passed: true, metrics: { costUsd: 0.005 } };
-  assert.deepEqual(summarizeEval(1, [passed], 0.02), {
+  const plan = [{ task: "exact", taskKind: "protocol", plannedSamples: 1 }] as const;
+  const passed: ComparableEvalResult = {
+    type: "eval_result", schemaVersion: 3, suite: "deepseek-code-v1", agent: "deepseek-code", task: "exact", taskKind: "protocol",
+    run: 1, model: "deepseek-v4-flash", thinking: "high", passed: true, costUsd: 0.005,
+    durationMs: 100, toolCalls: 0, toolErrors: 0, providerErrors: 0, attemptCount: 1,
+  };
+  assert.deepEqual(summarizeEval(plan, [passed], 0.02), {
     type: "eval_summary",
-    schemaVersion: 2,
+    schemaVersion: 3,
+    suite: "deepseek-code-v1",
+    agent: "deepseek-code",
     passed: true,
     plannedSamples: 1,
     completedSamples: 1,
@@ -113,15 +122,68 @@ test("evaluation summary reports pass, cost, and budget stop", () => {
     budgetExceeded: false,
     providerRequests: 1,
     maxProviderRequests: 1,
+    tasks: [{
+      task: "exact", taskKind: "protocol", plannedSamples: 1, completedSamples: 1,
+      passedSamples: 1, failedSamples: 0, passRate: 1, averageDurationMs: 100,
+      medianDurationMs: 100, p95DurationMs: 100, costUsd: 0.005, averageCostUsd: 0.005,
+      toolCalls: 0, toolErrors: 0, providerErrors: 0, providerRequests: 1,
+    }],
   });
-  const repaired = summarizeEval(1, [{ passed: true, costUsd: 0.007, attemptCount: 2 }], 0.02, 2);
+  const repaired = summarizeEval(plan, [{ ...passed, costUsd: 0.007, attemptCount: 2 }], 0.02, 2);
   assert.equal(repaired.costUsd, 0.007);
   assert.equal(repaired.providerRequests, 2);
   assert.equal(repaired.maxProviderRequests, 2);
-  const stopped = summarizeEval(2, [{ ...passed, metrics: { costUsd: 0.015 } }], 0.01);
+  const stopped = summarizeEval([{ ...plan[0], plannedSamples: 2 }], [{ ...passed, costUsd: 0.015 }], 0.01);
   assert.equal(stopped.passed, false);
   assert.equal(stopped.stoppedReason, "cost_limit");
-  assert.equal(summarizeEval(1, [{ ...passed, metrics: { costUsd: 0.03 } }], 0.02).budgetExceeded, true);
+  assert.equal(summarizeEval(plan, [{ ...passed, costUsd: 0.03 }], 0.02).budgetExceeded, true);
+});
+
+test("task summaries aggregate logical samples instead of only final attempts", () => {
+  const base: ComparableEvalResult = {
+    type: "eval_result", schemaVersion: 3, suite: "deepseek-code-v1", agent: "deepseek-code", task: "repair-feedback", taskKind: "repair",
+    run: 1, model: "deepseek-v4-flash", thinking: "high", passed: true,
+    durationMs: 300, costUsd: 0.003, toolCalls: 5, toolErrors: 1, providerErrors: 0, attemptCount: 2,
+  };
+  const summaries = summarizeEvalTasks(
+    [{ task: "repair-feedback", taskKind: "repair", plannedSamples: 2 }],
+    [base, { ...base, run: 2, passed: false, durationMs: 100, costUsd: 0.001, toolCalls: 3, toolErrors: 1 }],
+  );
+  assert.deepEqual(summaries[0], {
+    task: "repair-feedback", taskKind: "repair", plannedSamples: 2, completedSamples: 2,
+    passedSamples: 1, failedSamples: 1, passRate: 0.5, averageDurationMs: 200,
+    medianDurationMs: 200, p95DurationMs: 300, costUsd: 0.004, averageCostUsd: 0.002,
+    toolCalls: 8, toolErrors: 2, toolErrorRate: 0.25, providerErrors: 0, providerRequests: 4,
+  });
+});
+
+test("normalized comparison only includes common task and run samples", () => {
+  const rows = parseComparableEvalResults([
+    { type: "eval_plan", schemaVersion: 3 },
+    { type: "eval_result", schemaVersion: 3, suite: "deepseek-code-v1", agent: "deepseek-code", task: "exact", taskKind: "protocol", run: 1, model: "deepseek-v4-flash", thinking: "high", passed: true, durationMs: 100, costUsd: 0.001, toolCalls: 0, toolErrors: 0, providerErrors: 0, attemptCount: 1 },
+    { type: "eval_summary", schemaVersion: 3 },
+  ].map((value) => JSON.stringify(value)).join("\n"), "ours.ndjson");
+  const competitor: ComparableEvalResult[] = [
+    { ...rows[0]!, agent: "claude-code", passed: false, durationMs: 200, costUsd: 0.002 },
+    { ...rows[0]!, agent: "claude-code", task: "extra", run: 1 },
+  ];
+  const comparison = compareEvalResults([...rows, ...competitor]);
+  assert.deepEqual(comparison.commonSamples, ["exact#1"]);
+  assert.equal(comparison.groups[0]?.includedSamples, 1);
+  assert.equal(comparison.groups[1]?.excludedSamples, 1);
+  assert.equal(comparison.groups[1]?.passRate, 0);
+  const withoutOptionalMetrics = compareEvalResults(rows.map((row) => ({
+    ...row,
+    costUsd: undefined,
+    toolCalls: undefined,
+    toolErrors: undefined,
+    providerErrors: undefined,
+    attemptCount: undefined,
+  })));
+  assert.equal("costUsd" in withoutOptionalMetrics.groups[0]!, false);
+  assert.equal("toolCalls" in withoutOptionalMetrics.groups[0]!, false);
+  assert.throws(() => parseComparableEvalResults('{"type":"eval_result","schemaVersion":2}', "old.ndjson"), /schemaVersion 3/);
+  assert.throws(() => compareEvalResults([...rows, { ...competitor[0]!, suite: "other-suite" }]), /shared evaluation suite/);
 });
 
 test("metrics collector records latency, reasoning, tools, cache and ordered event categories", () => {
