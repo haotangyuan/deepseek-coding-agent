@@ -119,12 +119,12 @@ flowchart TB
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；未知项目先过滤，TUI 可临时/永久信任并 reload | `src/context-resources.ts`；`src/project-trust.ts`；`test/context-resources.test.ts` | 稳定；Extension 仍禁用 |
 | 本地设置 | 私有 JSON 保存模型、thinking、mode、approval、reasoning 展示；CLI 显式值优先，损坏时安全回退且不覆盖 | `src/product-settings.ts`；`test/product-settings.test.ts` | 日用核心偏好可用 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；Pi 选择器支持会话热切换和树导航，仍限制当前 cwd | `src/sessions.ts` `createSessionControls()`；`src/interactive.ts` `showSessions()`、`handleTree()`；对应 Session/TUI 测试 | 机制与主要交互完整 |
-| Completion Evidence 与验证 | 记录修改、diff、验证和错误；`/verify` 只预览候选，`/verify confirm` 才新增一次 Agent 回合 | `src/completion-evidence.ts`；`src/validation-suggestions.ts`；`src/interactive.ts` `handleVerify()` | 显式闭环可用；不自动 Gate |
+| Completion Evidence 与验证 | 记录修改、diff、验证和错误；受信任 `.deepseek-code/validation.json` 可声明命名命令，`/verify <name>` 只预览，`/verify confirm` 才新增一次 Agent 回合 | `src/completion-evidence.ts`；`src/validation-suggestions.ts`；`src/interactive.ts` `handleVerify()` | 项目覆盖与 manifest fallback 可用；不自动 Gate |
 | Cache Inspector | 本轮和 Session hit/miss/rate，足量样本下降告警 | `src/cache-inspector.ts:42`；`test/cache-inspector.test.ts` | 观测可用 |
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 88 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 93 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、命名验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -139,8 +139,8 @@ flowchart TB
 
 ### 5.2 仍然会造成日常摩擦
 
-1. **项目验证命令不能配置**：`/verify` 只从固定 manifest 推导候选，尚无受信任的项目级覆盖。
-2. **工具结果缺少搜索**：卡片可展开 tail 并能定位 Pi 完整输出文件，但还不能在 TUI 内搜索长日志。
+1. **工具结果缺少搜索**：卡片可展开 tail 并能定位 Pi 完整输出文件，但还不能在 TUI 内搜索长日志。
+2. **验证选择仍需人工判断**：项目可声明多个命令，但产品不会根据本轮修改文件自动猜测最相关的一条。
 3. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
 
 ## 6. 外部产品带来的设计启发
@@ -290,7 +290,7 @@ flowchart TB
 
 - 保留当前 Completion Evidence，不立即改成强制自动续跑。
 - settled 后如果发生 write/edit 但没有 diff 或验证，提供 `/diff`、`/verify`、`/undo`；继续输入普通消息即接受现状。
-- `/verify` 只读取固定 manifest 并展示一个候选、来源与费用提示；`/verify confirm` 必须紧随预览，才新增一次 Agent 回合。
+- `/verify` 优先读取已信任且启用的项目命名命令；没有配置时才读取固定 manifest。多个命令先选择名称，预览与确认仍分离。
 - package script 按 check/test/lint/build 选择，并支持 Python、Cargo、Go、Maven、Gradle 固定入口；未知项目不猜命令。
 - 对已批准的常见安全检查支持当前进程精确授权，继续拒绝通配符放行。
 - TUI 工具结果默认展示两行 tail，可通过 `/tool` 展开到 16 行；模型侧复用 Pi Bash 的行数/字节上限与 `pi-bash` 临时完整输出，不复制日志截断器。
@@ -299,7 +299,7 @@ flowchart TB
 验收结果：
 
 - 修改未验证、验证失败、验证通过、无 checkpoint/继续输入路径均由替身 Session 或现有 TUI 测试覆盖。
-- `/verify` 零请求，未预览确认失败，预览后确认恰好一个请求；自动化不调用真实 API。
+- `/verify` 列表和预览零请求，未知名称/未预览确认失败，资源关闭后旧预览失效，预览后确认恰好一个请求；自动化不调用真实 API。
 - 5000 字符工具失败结果在 TUI 截断；Pi 源码确认长 Bash 输出保存临时文件。
 
 ### P1-A：本地设置与项目信任（核心范围已完成，2026-07-16）
@@ -309,7 +309,7 @@ flowchart TB
 功能：
 
 - 用户级设置保存默认模型、thinking、mode、approval、reasoning 展示和 TUI 偏好。
-- 项目级设置只保存非敏感选项和建议验证命令，不保存 API Key。
+- 产品级项目资源可声明建议验证命令，不保存 API Key；通用项目偏好仍暂缓。
 - 首次进入包含项目 AGENTS/Skills/Prompts 的陌生目录时，展示来源并允许本次启用、记住启用或禁用。
 - 复用 Pi `ProjectTrustStore`/trust 组件；项目资源信任继续不等于工具批准。
 - 设置文件损坏时显示错误并回退安全默认值，不静默覆盖。
@@ -321,9 +321,10 @@ flowchart TB
 - 复用 Pi `ProjectTrustStore` 保存规范化路径决定；未知/损坏状态 fail-closed，交互 TUI 提供本次/永久启用或禁用。
 - 未信任时同时关闭 Pi 项目 settings 和项目/祖先 AGENTS、项目 Skills/Prompts；一次性 CLI 不弹询问而保持关闭。
 - `/resources on` 不能绕过信任；第三方 Extension 继续禁用；工具审批独立不变。
+- `.deepseek-code/validation.json` 进入同一信任卡；信任前只检查存在性，不读取内容。
 - 详细边界见 `docs/local-settings-and-project-trust.md`。
 
-保留项：项目级产品偏好和建议验证命令尚未实现，待真实项目出现稳定覆盖需求后独立设计。
+保留项：通用项目级产品偏好尚未实现；建议验证命令已用独立、受信任的小型配置完成，避免把可执行命令混进普通偏好。
 
 ### P1-B：Bash 与工具结果体验（已完成，2026-07-16）
 
@@ -455,6 +456,12 @@ Flash/high、Flash/max、Pro/max 工作档位继续暂缓；下一次 Prompt 迭
 成功标准：常用偏好跨进程恢复且 CLI 可覆盖；陌生项目资源在用户决定前不进入模型；损坏设置/信任文件 fail-closed；信任不改变工具审批。
 
 完成证据：用户设置白名单与私有权限、Pi trust store、SettingsManager 项目开关、ResourceLoader 过滤/reload、80×24 信任卡及一次性 CLI 警告均有自动化覆盖。
+
+### Iteration 7：受信任项目验证配置（已完成）
+
+成功标准：项目可以声明多个本地验证入口；信任前不读取命令；列表和预览不产生请求；无效配置、越界路径和失效信任不能静默执行。
+
+完成证据：`.deepseek-code/validation.json`、Trust/Resources 双门、名称/数量/长度校验、symlink 工作区边界、`/verify <name>` 列表与确认已落地；93/93 自动化、完整构建、真实仓库配置解析和离线 Doctor 均通过。
 
 ## 12. 每次迭代的完成门槛
 
