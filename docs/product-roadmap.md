@@ -1,7 +1,7 @@
 # DeepSeek Coding Agent 产品与技术路线图
 
 > 文档性质：持续维护的产品、架构与开发决策基线
-> 最近更新：2026-07-16（本地设置与项目上下文信任）
+> 最近更新：2026-07-16（Prompt Profile 重复 A/B）
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
 > M3 实现基线提交：`4d57b48`
@@ -466,7 +466,8 @@ npm test
 | Done | 本轮 Diff 与 Undo | 已完成本轮聚合补丁、冲突保护、Resume 和显式文件恢复 |
 | Done | 显式验证闭环 | 已完成只读候选发现、双阶段确认和验证 Evidence 回收 |
 | Done | 本地设置与项目信任 | 已完成私有偏好、CLI 覆盖、Pi trust store、fail-closed 资源加载和 TUI 决策卡 |
-| P1 | DeepSeek 量化优化 | 显式 Prompt Profile 已完成；重复 A/B 与默认值决策待完成 |
+| Done | Prompt Profile 首轮量化 | 18 个 repair 样本无质量收益，默认保持 pi；后续先扩充高区分度任务 |
+| P1 | DeepSeek 量化优化 | 扩充跨模块与验证失败任务，再评估 Prompt/thinking/模型档位 |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
@@ -534,9 +535,11 @@ npm test
 | D-041 | 用户设置只接受固定非敏感字段，损坏时安全默认且只读 | 已采纳 | 避免凭据进入产品设置，也不静默覆盖用户需要修复的原文件 |
 | D-042 | 未知项目上下文 fail-closed，信任与工具审批保持独立 | 已采纳 | AGENTS/Skills/Prompts 会改变模型行为；启用它们不应同时授予文件或 Shell 权限 |
 | D-043 | DeepSeek Prompt 先作为显式 Profile A/B，默认保持 Pi | 已采纳 | 通过 `appendSystemPromptOverride` 保留 Pi 和用户上下文；没有重复评测证据前不改变默认行为或增加自动路由 |
+| D-044 | 首轮重复 A/B 后默认继续使用 Pi Profile | 已采纳 | 两档 9/9 通过，DeepSeek Profile 总体耗时高 4.0%、成本高 6.3%，没有质量收益；保留显式实验入口但不默认注入 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成 Prompt Profile 重复 A/B。Flash/high 下三个 repair 任务每档各 3 次，两档均 9/9 通过且无工具/Provider 错误；DeepSeek Profile 总体平均耗时高 4.0%、成本高 6.3%，未观察到质量收益。默认保持 `pi`，实验入口保留，下一步先扩充高区分度任务。详见 `docs/prompt-profile-ab.md`。
 - **2026-07-16：** 完成 P1-C 首个可评测 Prompt Profile。CLI/TUI/评测显式支持 `pi|deepseek`，DeepSeek 短提示通过 Pi append override 组合而非替换默认 System Prompt，并保留受信任项目 APPEND_SYSTEM；88/88 自动化、dry-run 和两档各一次 Flash/high `exact` 真实 Smoke 通过。单次缓存/延迟差异不作优化结论，默认仍为 `pi`，等待重复 A/B 决策。
 - **2026-07-16：** 完成本地设置与项目上下文信任。产品私有设置保存 DeepSeek-only 模型、thinking、mode、approval 和 reasoning 展示；显式 CLI 值优先，损坏文件安全回退且不覆盖。未知项目在 AGENTS/Skills/Prompts 和项目设置进入模型前展示来源，支持本次/永久启用或禁用；一次性 CLI fail-closed，Extension 与工具审批边界不变。
 - **2026-07-16：** 完成 Bash 与工具结果卡。TUI 保留 start 参数并用 update/end 原地刷新，展示 cwd、持续时间、退出/超时/取消、Pi 截断方式与完整输出路径；`/tool [id-prefix]` 展开有界 tail。78/78 自动化通过。

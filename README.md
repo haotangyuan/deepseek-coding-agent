@@ -156,11 +156,13 @@ npm start -- --mode plan --approval ask "Inspect this repository and propose a f
 npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with OK"
 ```
 
-显式启用待评测的 DeepSeek Coding Prompt（当前默认仍为 `pi`，避免未经对照就改变日用行为）：
+显式启用实验性的 DeepSeek Coding Prompt（18 个重复 repair 样本没有显示质量收益，因此默认继续使用 `pi`）：
 
 ```bash
 npm start -- --prompt-profile deepseek "Inspect this repository and explain the narrowest useful check"
 ```
+
+重复 A/B 的方法、数据和默认值决策见 [docs/prompt-profile-ab.md](docs/prompt-profile-ab.md)。
 
 继续当前工作区最近会话：
 

@@ -185,8 +185,8 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 ## 9. 下一步
 
+- Prompt Profile 首轮重复 A/B 已完成：18 个 repair 样本均通过，`deepseek` 没有质量收益且总体效率略差，默认继续使用 `pi`。详见 `prompt-profile-ab.md`。
 - 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
-- 将 `repair-js`、`repair-multi-file` 也各重复至少 3 次，形成无反馈/多文件/反馈恢复三组基线。
 - 扩充本项目自己的异质任务和重复样本，用同一 suite 比较 prompt、工具、thinking 与模型策略迭代前后的变化。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。

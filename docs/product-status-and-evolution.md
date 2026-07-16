@@ -351,7 +351,7 @@ flowchart TB
 
 目标：通过数据改善任务完成率，而不是增加隐藏智能。
 
-状态：**首个可评测切片已完成（2026-07-16），默认值是否切换仍待重复 A/B。**
+状态：**首个可评测切片与重复 A/B 已完成（2026-07-16），默认保持 `pi`。**
 
 候选实验：
 
@@ -368,9 +368,9 @@ flowchart TB
 - TUI 顶部、状态行、`/status`、一次性 stderr 和 Schema v3 评测样本/计划都显示当前 Profile。
 - 自动化覆盖纯函数、CLI 参数、真实 `DefaultResourceLoader` 与受信任项目 `.pi/APPEND_SYSTEM.md` 的组合，共 88 项；自动化不调用真实 API。
 
-尚未完成：至少三次同模型、同 thinking、同任务的 `pi`/`deepseek` 重复对照。在完成率、工具错误、cache、延迟和成本没有稳定改善前，默认值保持 `pi`；Flash/high、Flash/max、Pro/max 工作档位继续暂缓。
+重复 A/B 使用 Flash/high，在 `repair-js`、`repair-multi-file`、`repair-feedback` 上每档各 3 次。两档均 9/9 通过且工具/Provider 错误为 0；`deepseek` 总体平均耗时高 4.0%、总成本高 6.3%、多 1 次工具调用，没有观察到质量收益。因此默认保持 `pi`，`deepseek` 只保留为显式实验入口，不做自动路由。完整方法、逐任务数据和结论边界见 `docs/prompt-profile-ab.md`。
 
-首轮链路 Smoke（Flash/high、`exact`、各一次）两档均通过且无工具/Provider 错误：`pi` 1362ms、$0.0000721，`deepseek` 1043ms、$0.0000330。后者当次命中 384 cache token，但缓存是 best-effort 且两次请求前缀不同，这组数据不能证明 Prompt 更快或更省；只确认 Profile 能进入真实请求并被评测结果记录。
+Flash/high、Flash/max、Pro/max 工作档位继续暂缓；下一次 Prompt 迭代应先扩充能拉开成功率的跨模块或验证失败任务，避免在已 100% 通过的小 fixture 上调词过拟合。
 
 ### P2：增强能力
 
