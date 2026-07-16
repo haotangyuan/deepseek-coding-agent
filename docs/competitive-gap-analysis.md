@@ -1,0 +1,67 @@
+# DeepSeek Coding Agent 能力差距与改进顺序
+
+> 最近核对：2026-07-16
+> 项目提交基线：`0d979c3`
+> Pi 研究基线：`dcfe36c79702ec240b146c45f167ab75ecddd205`
+> Pi SDK：`@earendil-works/pi-coding-agent@0.80.7`
+
+## 1. 目的
+
+本文把“怎样接近 Claude Code、OpenCode 接 DeepSeek 的水平”转成当前仓库可验证的工程缺口。判断依据依次是本项目源码、安装后的 Pi SDK 类型、相邻 Pi 源码、DeepSeek 官方文档，以及 Claude Code/OpenCode 官方能力边界。
+
+比较目标不是功能数量，而是同一 DeepSeek 模型下的任务完成率、工具有效率、用户干预、缓存命中和成功任务成本。
+
+## 2. 建议审计矩阵
+
+| 建议能力 | 当前事实 | 判断 |
+|---|---|---|
+| 自建 DeepSeek Native Provider | Pi 已处理 V4 模型、thinking、reasoning replay、tool stream、usage 和错误；本项目只做 DeepSeek-only 选择 | 暂不复制协议层；只有兼容层出现可复现缺陷才补 Pi 或贡献上游 |
+| 自建流式 Tool Call assembler | Pi AgentSession 已输出 parsed tool events，项目已有参数/结果事件测试 | 已由底座解决，不重复实现 |
+| reasoning_content 回填 | Pi DeepSeek compat 使用 `requiresReasoningContentOnAssistantMessages` | 已由底座解决，继续用真实多轮工具任务回归 |
+| ls/glob/grep | 0.80.7 内置 ls/find/grep；项目此前只暴露 read | 本轮启用 ls/grep；find 因 fd 缺失失败，完成依赖预检前不启用 |
+| apply_patch | Pi 当前默认是精确 edit/write，没有 apply_patch | 先收集 edit 失败样本；没有数据前不新增第二套修改语义 |
+| LSP/diagnostics | 当前没有 | P2；先从 TypeScript/Python diagnostics 的只读、显式命令开始，不先做通用 LSP 平台 |
+| 修改后 diff/test completion gate | 评测器已有外部验证与一次反馈恢复；日常 TUI 只有 Git 摘要 | P1 最高优先候选；先设计可观测 evidence，再决定是否自动追加付费模型轮次 |
+| Cache Inspector | metrics 已有 cacheRead 与命中率，TUI 无逐轮诊断 | P1；增加逐轮/会话命中、显著下降提示，但不猜测具体失效原因 |
+| Plan/Build | `auto-read` 接近只读能力，但不是显式会话状态 | P1；通过真实工具 allowlist 实现，不只靠 Prompt |
+| Flash/Pro 自动路由 | 当前显式手动选择，避免付费升级惊喜 | 暂缓自动路由；先有分阶段任务数据，再考虑在清晰边界切换 |
+| Tool Call repair | Pi Schema 错误会回填模型；尚无确定性 JSON 修复层 | 继续采集失败样本；默认不偷偷猜参数 |
+| 权限规则与敏感文件 | 已有 workspace/symlink、三种模式和危险 Bash 阻断；尚无通用 pattern rule/OS sandbox | P1/P2；先保护敏感路径并做命令模式授权，沙箱独立演进 |
+| 自动项目记忆 | 已有 AGENTS/Skills/Session/Compaction，没有自动写长期记忆 | 延后；自动记忆会引入陈旧上下文和前缀漂移 |
+| 多 Agent/Explore 子 Agent | 当前没有，路线图明确 deferred | 单 Agent 闭环和评测稳定前不做 |
+| 大型 competitor benchmark | 当前 6 个固定任务，缺 Claude Code/OpenCode 同模型矩阵 | M7；先扩充异质任务，再做同模型、同仓库、同预算对照 |
+
+## 3. 本轮落地与证据
+
+### Pi 原生仓库发现
+
+- `ls`：目录排序与条目/字节截断由 Pi 实现。
+- `grep`：ripgrep、`.gitignore`、匹配/字节/长行截断由 Pi 实现。
+- 两者进入 `ask` 与 `auto-read` 的稳定工具集合，并复用现有 workspace/realpath/symlink 检查。
+- `find` 真实调用因缺少 `fd` 返回错误，因此没有进入默认集合。
+
+这比让模型用 Bash 做 `find/grep` 更安全，也比大范围 read 更节省上下文。工具顺序固定为 `read, ls, grep, write, edit, bash`，避免每轮动态重排工具 Schema。
+
+### 反馈恢复重复评测
+
+`repair-feedback` 三次重复全部成功，工具错误为 0，平均单样本成本约 `$0.000656`。它支持“短而可行动的验证反馈优于原始 TAP 倾倒”这一局部结论，但不能替代更异质的真实仓库任务。
+
+## 4. 下一步顺序
+
+1. **Completion evidence：** 记录本轮修改、diff 是否检查、执行过哪些验证；先提示证据缺失，不默认自动增加模型轮次。
+2. **Cache Inspector：** TUI 展示逐轮与会话 cache hit/miss，并对显著下降给出事实型提示。
+3. **Plan/Build：** 在工具层切换只读与可修改集合，明确用户确认边界。
+4. **敏感路径规则：** 在现有工作区边界上增加 `.env`、凭据和外部目录的显式策略。
+5. **扩充评测：** 为无反馈、多文件、反馈修复分别重复，并加入真实小仓库任务和 competitor 同模型矩阵。
+
+apply_patch、LSP、自动路由和子 Agent 只有在上述闭环有数据后再进入实现，避免把项目做成功能堆叠。
+
+## 5. 官方事实边界
+
+- DeepSeek [Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode) 仍明确包含 reasoning content 与工具轮次语义。
+- DeepSeek [Tool Calls](https://api-docs.deepseek.com/guides/tool_calls) 提供 strict mode，但本项目仍把本地校验和权限作为独立边界。
+- DeepSeek [Context Caching](https://api-docs.deepseek.com/guides/kv_cache/) 返回 cache hit/miss token，支持后续 Cache Inspector。
+- Claude Code [Permissions](https://docs.anthropic.com/en/docs/claude-code/permissions) 与 [Hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) 说明权限和生命周期拦截属于 Harness 能力。
+- OpenCode [Tools](https://opencode.ai/docs/tools/) 与 [Permissions](https://opencode.ai/docs/permissions/) 展示 grep/glob/LSP 和 allow/ask/deny 的产品边界。
+
+这些资料只用于确定产品问题，不代表要复制对方命令面或内部实现。

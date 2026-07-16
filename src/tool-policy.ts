@@ -27,7 +27,8 @@ export interface ToolPolicy {
   evaluate(toolName: string, input: Record<string, unknown>): Promise<ToolPolicyDecision>;
 }
 
-const SUPPORTED_TOOLS = ["read", "write", "edit", "bash"] as const;
+const READ_ONLY_TOOLS = ["read", "ls", "grep"] as const;
+const SUPPORTED_TOOLS = [...READ_ONLY_TOOLS, "write", "edit", "bash"] as const;
 const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
 const MAX_PREVIEW_LENGTH = 4000;
 
@@ -177,7 +178,7 @@ function isSupportedTool(toolName: string): toolName is (typeof SUPPORTED_TOOLS)
 
 export function activeToolsForMode(mode: ApprovalMode): string[] {
   if (mode === "deny") return [];
-  if (mode === "auto-read") return ["read"];
+  if (mode === "auto-read") return [...READ_ONLY_TOOLS];
   return [...SUPPORTED_TOOLS];
 }
 
@@ -201,7 +202,12 @@ export function createToolPolicy(options: {
         if (!pathDecision.allowed) return pathDecision;
       }
 
-      if (toolName === "read") return { allowed: true };
+      if ((toolName === "ls" || toolName === "grep") && input.path !== undefined) {
+        const pathDecision = await validateWorkspacePath(options.cwd, input.path);
+        if (!pathDecision.allowed) return pathDecision;
+      }
+
+      if (READ_ONLY_TOOLS.some((name) => name === toolName)) return { allowed: true };
       if (options.mode === "auto-read") {
         return { allowed: false, reason: `${toolName} is disabled by approval mode auto-read` };
       }

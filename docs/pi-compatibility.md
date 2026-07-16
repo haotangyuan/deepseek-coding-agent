@@ -42,6 +42,7 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 | `AgentSession.compact/navigateTree/waitForIdle` | 类型、源码和事件模型已核对 | 手动压缩、leaf 导航和安全退出 |
 | `CreateAgentSessionOptions.thinkingLevel` | 0.80.7 类型确认，真实 Flash high/max 与 Pro high 通过 | CLI 显式固定评测档位；resume 未显式指定时保留历史值 |
 | `AgentSession.getSessionStats` | token、cacheRead/cacheWrite、cost 类型和真实 usage 已验证 | M6 结构化指标直接读取，不自行重算 Provider token |
+| Pi `ls/grep/find` tools | 0.80.7 类型、Schema、截断和 operations 注入点已核对 | 默认启用 ls/grep；find 因本机缺少 fd 暂缓 |
 | `deepseek-v4-flash` | catalog 中存在 | 默认模型可用 |
 | `deepseek-v4-pro` | catalog 中存在 | 可显式选择，但不自动升级 |
 | DeepSeek compat | 仍为 OpenAI Completions、`thinkingFormat: "deepseek"`、reasoning replay | 继续由 Pi 处理协议兼容 |
@@ -70,6 +71,17 @@ Pi 的 `main`、npm 发布包和本项目升级节奏彼此独立。本文记录
 安装版本与 lockfile 均为 `0.80.7`，npm audit 报告 0 个漏洞。
 
 ## 5. 验证记录
+
+2026-07-16（只读仓库发现工具）：
+
+| 验证 | 结果 |
+|---|---|
+| `npm run check` / `npm test` | 通过；42/42，不调用真实 API |
+| Pi ls/grep | 临时目录真实执行通过；工作区路径与 symlink 边界通过 |
+| Pi find | 真实 Smoke 暴露本机缺少 fd，未进入默认工具集合 |
+| DeepSeek Flash/high | auto-read 下实际调用 ls 与 grep 成功 |
+
+find 的失败被视为产品依赖事实，不通过测试阶段安装系统工具掩盖。
 
 2026-07-15（M6 错误诊断与 repair fixture）：
 

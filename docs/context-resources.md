@@ -61,7 +61,7 @@ flowchart LR
 
 | 边界 | 控制的问题 | 不控制的问题 |
 |---|---|---|
-| 项目资源开关 | 仓库/祖先指令是否进入模型上下文 | read/write/edit/bash 是否执行 |
+| 项目资源开关 | 仓库/祖先指令是否进入模型上下文 | read/ls/grep/write/edit/bash 是否执行 |
 | 工具审批策略 | 模型提出的本地动作是否被允许 | 模型读到哪些 AGENTS/Skills/Prompts |
 
 因此，`/resources off` 后审批模式保持 `ask/auto-read/deny` 原值；反过来，批准某次 write 也不代表永久信任项目指令。审批仍不是 OS 沙箱。

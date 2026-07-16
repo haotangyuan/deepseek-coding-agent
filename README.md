@@ -17,7 +17,7 @@
 - 默认且仅允许 `deepseek` Provider，默认模型为 `deepseek-v4-flash`，不会回退到其他 Provider。
 - 支持从命令行提交一次性任务，输出文本、reasoning、工具调用、工具结果、重试、错误和完成事件。
 - 支持 `ask`、`auto-read`、`deny` 三种工具审批模式；默认 `ask`。
-- read/write/edit 受工作区路径和 symlink 边界保护；write/edit/bash 在执行前展示并确认。
+- 直接复用 Pi 的 read/ls/grep 做受限仓库探索；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
 - 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消；Provider/工具失败、自动重试和取消使用 80 列友好的紧凑恢复卡片。
 - 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。

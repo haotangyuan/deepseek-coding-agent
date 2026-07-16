@@ -131,7 +131,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 源码事实：Pi `isRetryableAssistantError()` 已识别限流、5xx 和常见网络文本，`AgentSession` 负责指数退避和 `auto_retry_*` 事件。本项目只把这些事件转成 DeepSeek 可行动诊断，避免产生第二套重试状态机。
 当 `auto_retry_start` 已发生但错误文本无法细分时，界面以 Pi 的实际决定显示 `retryable=yes`，不会让静态分类与运行状态相互矛盾。
 
-## 7. 2026-07-15 受控 Smoke
+## 7. 受控 Smoke 与重复评测
 
 所有调用使用本地忽略的 `.env`，未读取或打印密钥；Session 为内存模式。
 
@@ -148,6 +148,26 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 事实：既有任务与新增反馈恢复任务均完成预期链路。`repair-feedback` 的首次预验证曾超过 2 分钟且没有结果，因此增加了真实 Session abort；随后直接回填 TAP 输出虽然功能通过，却造成 36 次工具调用和 31 次工具错误。改成不含路径/堆栈的 evaluator 摘要后，最终样本用两轮、6 次成功工具调用和 0 次工具错误完成，且总成本下降到 $0.0008691984。推断限制：这是单个最终样本，不能据此宣称优化具有统计显著性；它只证明新闭环可工作，并提供了值得重复测量的反馈格式假设。
 
+### 7.1 2026-07-16 repair-feedback 三次重复
+
+固定 `deepseek-v4-flash + high`、同一 fixture 和短摘要策略，运行 3 个逻辑样本、最多 6 次请求，预算 `$0.01`。结果没有保存完整 reasoning、工具内容或会话。
+
+| 指标 | 结果 |
+|---|---:|
+| 恢复成功 | 3/3 |
+| 首轮按预期失败 | 3/3 |
+| 第二轮恢复 | 3/3 |
+| Provider 请求 | 6 |
+| 工具调用 | 每样本 2 + 3 |
+| 工具错误 | 0 |
+| 首轮平均耗时 / 首响应 | 5183 ms / 608 ms |
+| 反馈轮平均耗时 / 首响应 | 7481 ms / 566 ms |
+| 首轮 / 反馈轮平均 cache hit | 92.23% / 97.12% |
+| 平均单样本成本 | $0.000656251 |
+| 总成本 | $0.001968753 |
+
+源码确认事实：3 次都经过完整的“外部隐藏测试失败 → evaluator 最小摘要 → 新内存 Session 读取共享工作区 → 修复 → 隐藏测试通过”。设计推断：短摘要在这个固定小任务上表现稳定，并显著避免了之前 31 次工具错误的抖动；但样本同质且只有 3 次，不能推广为所有真实仓库或模型档位的统计结论。
+
 ## 8. 优化准入与回滚
 
 任何 prompt、工具描述或上下文策略变化都按以下顺序验证：
@@ -161,7 +181,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 ## 9. 下一步
 
 - 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
-- 将 repair 任务各重复至少 3 次，比较短摘要对工具错误、耗时和成本的稳定影响。
+- 将 `repair-js`、`repair-multi-file` 也各重复至少 3 次，形成无反馈/多文件/反馈恢复三组基线。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。
 - 只有在普通 Schema 失败样本足够明确后，再在 playground 研究 strict tool mode。

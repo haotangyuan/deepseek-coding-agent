@@ -131,7 +131,7 @@ class FakeSession implements InteractiveSession {
   }
 
   getActiveToolNames(): string[] {
-    return ["read", "write", "edit", "bash"];
+    return ["read", "ls", "grep", "write", "edit", "bash"];
   }
 
   async reload(): Promise<void> {
@@ -165,7 +165,7 @@ function createSnapshot(): ContextSnapshot {
     projectResourcesEnabled: true,
     systemPromptCharacters: 120,
     estimatedSystemPromptTokens: 30,
-    activeTools: ["read", "write", "edit", "bash"],
+    activeTools: ["read", "ls", "grep", "write", "edit", "bash"],
     agentsFiles: [{ name: "AGENTS.md", path: joinForTest("AGENTS.md"), scope: "project", characters: 42 }],
     skills: [{ name: "review", path: joinForTest(".pi/skills/review/SKILL.md"), scope: "project", description: "Review code", modelInvocable: true }],
     prompts: [{ name: "fix", path: joinForTest(".pi/prompts/fix.md"), scope: "project", description: "Fix prompt", characters: 20 }],

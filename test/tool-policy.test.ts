@@ -8,7 +8,11 @@ import type {
   ToolCallEvent,
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { createWriteTool } from "@earendil-works/pi-coding-agent";
+import {
+  createGrepTool,
+  createLsTool,
+  createWriteTool,
+} from "@earendil-works/pi-coding-agent";
 import {
   activeToolsForMode,
   createToolPolicy,
@@ -30,8 +34,8 @@ async function withWorkspace(run: (workspace: string) => Promise<void>): Promise
 const rejectApproval = async (): Promise<boolean> => false;
 
 test("maps approval modes to the tools exposed to the model", () => {
-  assert.deepEqual(activeToolsForMode("ask"), ["read", "write", "edit", "bash"]);
-  assert.deepEqual(activeToolsForMode("auto-read"), ["read"]);
+  assert.deepEqual(activeToolsForMode("ask"), ["read", "ls", "grep", "write", "edit", "bash"]);
+  assert.deepEqual(activeToolsForMode("auto-read"), ["read", "ls", "grep"]);
   assert.deepEqual(activeToolsForMode("deny"), []);
 });
 
@@ -52,9 +56,15 @@ test("blocks paths that escape through a symlink", async () => {
       await writeFile(join(outside, "secret.txt"), "secret\n");
       await symlink(outside, join(workspace, "escape"));
       const policy = createToolPolicy({ cwd: workspace, mode: "ask", approve: rejectApproval });
-      const decision = await policy.evaluate("read", { path: "escape/secret.txt" });
-      assert.equal(decision.allowed, false);
-      assert.match(decision.reason ?? "", /resolves outside/);
+      for (const [toolName, input] of [
+        ["read", { path: "escape/secret.txt" }],
+        ["ls", { path: "escape" }],
+        ["grep", { pattern: "secret", path: "escape" }],
+      ] as const) {
+        const decision = await policy.evaluate(toolName, input);
+        assert.equal(decision.allowed, false);
+        assert.match(decision.reason ?? "", /resolves outside/);
+      }
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -66,10 +76,31 @@ test("auto-read and deny fail closed for disallowed tools", async () => {
     const autoRead = createToolPolicy({ cwd: workspace, mode: "auto-read", approve: rejectApproval });
     const deny = createToolPolicy({ cwd: workspace, mode: "deny", approve: rejectApproval });
 
+    assert.equal((await autoRead.evaluate("ls", {})).allowed, true);
+    assert.equal((await autoRead.evaluate("grep", { pattern: "TODO" })).allowed, true);
+    assert.equal((await autoRead.evaluate("grep", { pattern: "secret", path: "../outside" })).allowed, false);
     assert.equal((await autoRead.evaluate("write", { path: "a.txt", content: "a" })).allowed, false);
     assert.equal((await autoRead.evaluate("bash", { command: "pwd" })).allowed, false);
     assert.equal((await deny.evaluate("read", { path: "a.txt" })).allowed, false);
     assert.equal((await deny.evaluate("unknown", {})).allowed, false);
+  });
+});
+
+test("Pi read-only discovery tools inspect only the approved workspace", async () => {
+  await withWorkspace(async (workspace) => {
+    await mkdir(join(workspace, "src"));
+    await writeFile(join(workspace, "src", "example.ts"), "export const marker = 'DISCOVERY_OK';\n");
+    const policy = createToolPolicy({ cwd: workspace, mode: "auto-read", approve: rejectApproval });
+    const textOutput = (result: Awaited<ReturnType<ReturnType<typeof createLsTool>["execute"]>>): string =>
+      result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+
+    const lsInput = { path: "src" };
+    assert.deepEqual(await policy.evaluate("ls", lsInput), { allowed: true });
+    assert.match(textOutput(await createLsTool(workspace).execute("ls-1", lsInput)), /example\.ts/);
+
+    const grepInput = { pattern: "DISCOVERY_OK", path: "src" };
+    assert.deepEqual(await policy.evaluate("grep", grepInput), { allowed: true });
+    assert.match(textOutput(await createGrepTool(workspace).execute("grep-1", grepInput)), /DISCOVERY_OK/);
   });
 });
 
