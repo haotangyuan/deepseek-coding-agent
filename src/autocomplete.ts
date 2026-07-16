@@ -26,7 +26,7 @@ const builtinCommands: SlashCommand[] = [
   { name: "status", description: "Show the current runtime state" },
   { name: "cache", description: "Inspect DeepSeek cache usage for the latest turn" },
   { name: "session", description: "Show the active session" },
-  { name: "sessions", description: "List recent workspace sessions" },
+  { name: "sessions", argumentHint: "[list]", description: "Select or list workspace sessions" },
   { name: "name", argumentHint: "<title>", description: "Name the active session" },
   { name: "compact", argumentHint: "[instructions]", description: "Compact the active context" },
   { name: "clone", description: "Clone the active session" },
@@ -111,7 +111,15 @@ function dynamicCommands(options: AutocompleteOptions): SlashCommand[] {
     { name: "thinking", argumentHint: "[level]", description: "Set reasoning effort", getArgumentCompletions: (prefix) => fuzzyItems(options.getThinkingLevels().map((value) => ({ value })), prefix) },
     { name: "mode", argumentHint: "[plan|build]", description: "Switch agent capability boundary", getArgumentCompletions: (prefix) => fuzzyItems(AGENT_MODES.map((value) => ({ value })), prefix) },
     { name: "resources", argumentHint: "[on|off]", description: "Toggle project context resources", getArgumentCompletions: (prefix) => fuzzyItems(["on", "off"].map((value) => ({ value })), prefix) },
-    { name: "tree", argumentHint: "[entry]", description: "Show or navigate the message tree", getArgumentCompletions: completeTree },
+    {
+      name: "tree",
+      argumentHint: "[entry|list]",
+      description: "Select, list, or navigate the message tree",
+      getArgumentCompletions: (prefix) => [
+        ...fuzzyItems([{ value: "list", description: "Print the tree without opening the selector" }], prefix),
+        ...completeTree(prefix),
+      ],
+    },
     { name: "fork", argumentHint: "<entry>", description: "Fork from a message tree entry", getArgumentCompletions: completeTree },
     ...resourceCommands(options.getContextSnapshot()),
   ];

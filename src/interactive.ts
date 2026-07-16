@@ -2,8 +2,11 @@ import {
   type AgentSession,
   type AgentSessionEvent,
   type CreateAgentSessionOptions,
+  initTheme,
   type ModelRegistry,
+  SessionSelectorComponent,
   type SessionStats,
+  TreeSelectorComponent,
 } from "@earendil-works/pi-coding-agent";
 import {
   type AutocompleteProvider,
@@ -28,7 +31,12 @@ import { createInteractiveAutocompleteProvider } from "./autocomplete.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
-import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
+import {
+  sessionDisplayName,
+  sessionFileName,
+  type SessionControls,
+  type SessionSelection,
+} from "./sessions.ts";
 import {
   AGENT_MODES,
   type AgentMode,
@@ -291,6 +299,7 @@ export class InteractiveMode {
   private readonly subheader: Text;
   private readonly status: StatusLine;
   private readonly editor: InteractiveEditor;
+  private readonly editorContainer = new Container();
   private readonly toolLines = new Map<string, Component>();
   private retryCard: NoticeCard | undefined;
   private assistantText = "";
@@ -309,8 +318,10 @@ export class InteractiveMode {
   private readonly cacheInspector = new CacheInspector();
   private agentMode: AgentMode;
   private unsubscribe: (() => void) | undefined;
+  private nextSessionSelection: SessionSelection | undefined;
 
   constructor(options: InteractiveModeOptions) {
+    initTheme("dark");
     this.options = options;
     this.session = options.session;
     this.agentMode = options.agentMode;
@@ -333,12 +344,13 @@ export class InteractiveMode {
     this.tui.addChild(new Text(colors.dim("Enter send · / commands · @ files · Tab complete · Ctrl+C cancel/exit"), 1, 0));
     this.tui.addChild(this.transcript);
     this.tui.addChild(this.status);
-    this.tui.addChild(this.editor);
+    this.editorContainer.addChild(this.editor);
+    this.tui.addChild(this.editorContainer);
     this.tui.setFocus(this.editor);
     this.updateStatus("idle");
   }
 
-  async run(): Promise<void> {
+  async run(): Promise<SessionSelection | undefined> {
     this.unsubscribe = this.session.subscribe((event) => this.handleEvent(event));
     this.addSystem(`workspace ${this.options.cwd}`);
     this.addSystem(`approval ${this.options.approvalMode}`);
@@ -357,6 +369,7 @@ export class InteractiveMode {
       this.pendingApproval = undefined;
       this.tui.stop();
     }
+    return this.nextSessionSelection;
   }
 
   requestApproval(request: ApprovalRequest): Promise<ApprovalDecision> {
@@ -500,7 +513,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /cache /session /sessions /name [title] /compact [instructions] /tree [entry] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /cache /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -513,7 +526,7 @@ export class InteractiveMode {
     } else if (command.name === "session") {
       this.showSession();
     } else if (command.name === "sessions") {
-      await this.showSessions();
+      await this.showSessions(command.argument);
     } else if (command.name === "name") {
       this.handleSessionName(command.argument);
     } else if (command.name === "compact") {
@@ -585,7 +598,7 @@ export class InteractiveMode {
     );
   }
 
-  private async showSessions(): Promise<void> {
+  private async showSessions(argument: string): Promise<void> {
     let sessions;
     try {
       sessions = await this.options.sessionControls.list();
@@ -597,7 +610,37 @@ export class InteractiveMode {
       this.addSystem("no persisted sessions in this workspace");
       return;
     }
-    const currentId = this.options.sessionControls.snapshot().id;
+    const current = this.options.sessionControls.snapshot();
+    if (argument !== "list") {
+      const close = (): void => this.hideSelector();
+      const currentPaths = new Set(sessions.map((session) => session.path));
+      const selector = new SessionSelectorComponent(
+        () => this.options.sessionControls.list(),
+        () => this.options.sessionControls.listAll(),
+        (sessionPath) => {
+          close();
+          if (!currentPaths.has(sessionPath)) {
+            this.addError("selected session belongs to another workspace; launch DeepSeek Code from that directory to resume it");
+            return;
+          }
+          if (sessionPath === current.file) {
+            this.addSystem("selected session is already active");
+            return;
+          }
+          this.nextSessionSelection = { type: "resume", target: sessionPath };
+          this.addSystem(`switching to session ${sessionFileName(sessionPath)}`);
+          void this.exit();
+        },
+        close,
+        () => void this.exit(),
+        () => this.tui.requestRender(),
+        { showRenameHint: false },
+        current.file,
+      );
+      this.showSelector(selector, selector.getSessionList());
+      return;
+    }
+    const currentId = current.id;
     const lines = sessions.slice(0, 12).flatMap((session) => {
       const marker = session.id === currentId ? "*" : " ";
       const created = session.created.toISOString().replace("T", " ").slice(0, 16);
@@ -643,7 +686,31 @@ export class InteractiveMode {
       return;
     }
     try {
-      if (target) {
+      if (!target) {
+        const rawTree = this.options.sessionControls.rawTree();
+        if (rawTree.length === 0) {
+          this.addSystem("session tree is empty");
+          return;
+        }
+        const close = (): void => this.hideSelector();
+        const selector = new TreeSelectorComponent(
+          rawTree,
+          this.options.sessionControls.leafId(),
+          this.tui.terminal.rows,
+          (entryId) => {
+            close();
+            if (entryId === this.options.sessionControls.leafId()) {
+              this.addSystem("selected tree entry is already the current leaf");
+              return;
+            }
+            void this.navigateTree(entryId);
+          },
+          close,
+        );
+        this.showSelector(selector, selector);
+        return;
+      }
+      if (target !== "list") {
         const result = await this.options.sessionControls.navigate(target);
         if (result.cancelled) {
           this.addSystem("tree navigation cancelled");
@@ -661,6 +728,35 @@ export class InteractiveMode {
     } catch (error) {
       this.addError(`tree navigation failed: ${sanitizeError(error)}`);
     }
+  }
+
+  private async navigateTree(entryId: string): Promise<void> {
+    try {
+      const result = await this.options.sessionControls.navigate(entryId);
+      if (result.cancelled) {
+        this.addSystem("tree navigation cancelled");
+      } else {
+        this.addSystem(`session leaf moved to ${entryId}; existing branches were preserved`);
+      }
+    } catch (error) {
+      this.addError(`tree navigation failed: ${sanitizeError(error)}`);
+    }
+    this.updateStatus(this.session.isStreaming ? "running" : "idle");
+    this.tui.requestRender();
+  }
+
+  private showSelector(component: Component, focus: Component): void {
+    this.editorContainer.clear();
+    this.editorContainer.addChild(component);
+    this.tui.setFocus(focus);
+    this.tui.requestRender();
+  }
+
+  private hideSelector(): void {
+    this.editorContainer.clear();
+    this.editorContainer.addChild(this.editor);
+    this.tui.setFocus(this.editor);
+    this.tui.requestRender();
   }
 
   private handleFork(entryId: string): void {

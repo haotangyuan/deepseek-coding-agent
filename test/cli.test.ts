@@ -327,9 +327,11 @@ test("runCli enters interactive mode only when no task and a TTY are available",
     createSession: async () => {
       throw new Error("one-shot session should not be created");
     },
-    runInteractive: async ({ model, approvalMode, agentMode }) => {
+    runInteractive: async ({ model, restoreSavedModel, thinkingExplicit, approvalMode, agentMode }) => {
       started = true;
       assert.equal(model.id, "deepseek-v4-flash");
+      assert.equal(restoreSavedModel, true);
+      assert.equal(thinkingExplicit, false);
       assert.equal(approvalMode, "ask");
       assert.equal(agentMode, "build");
     },

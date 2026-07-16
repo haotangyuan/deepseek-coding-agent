@@ -1,6 +1,7 @@
 import {
   type CompactionResult,
   type SessionInfo,
+  type SessionTreeNode,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
 import { existsSync } from "node:fs";
@@ -19,6 +20,7 @@ export interface SessionSummary {
   modified: Date;
   messageCount: number;
   firstMessage: string;
+  allMessagesText: string;
   cwd: string;
   model?: string;
   path: string;
@@ -45,10 +47,13 @@ export interface SessionSnapshot {
 export interface SessionControls {
   snapshot(): SessionSnapshot;
   list(): Promise<SessionSummary[]>;
+  listAll(): Promise<SessionSummary[]>;
   setName(name: string): void;
   compact(instructions?: string): Promise<CompactionResult>;
   abortCompaction(): void;
   tree(): SessionTreeItem[];
+  rawTree(): SessionTreeNode[];
+  leafId(): string | null;
   navigate(entryId: string): Promise<{ cancelled: boolean; editorText?: string }>;
   fork(entryId: string): { id: string; file: string };
   clone(): { id: string; file: string };
@@ -129,6 +134,10 @@ function resolveEntryId(manager: SessionManager, target: string): string {
 
 export function createSessionControls(session: ControllableSession, cwd: string): SessionControls {
   const manager = session.sessionManager;
+  const summarize = (sessions: SessionInfo[]): SessionSummary[] => sessions.map((info) => {
+    const model = SessionManager.open(info.path, manager.getSessionDir()).buildSessionContext().model;
+    return { ...info, model: model ? `${model.provider}/${model.modelId}` : undefined };
+  });
   return {
     snapshot: () => ({
       id: session.sessionId,
@@ -140,11 +149,9 @@ export function createSessionControls(session: ControllableSession, cwd: string)
     }),
     list: async () => {
       const sessions = await SessionManager.list(cwd, manager.getSessionDir());
-      return sessions.map((info) => {
-        const model = SessionManager.open(info.path, manager.getSessionDir()).buildSessionContext().model;
-        return { ...info, model: model ? `${model.provider}/${model.modelId}` : undefined };
-      });
+      return summarize(sessions);
     },
+    listAll: async () => summarize(await SessionManager.listAll(manager.getSessionDir())),
     setName: (name) => session.setSessionName(name),
     compact: (instructions) => session.compact(instructions),
     abortCompaction: () => session.abortCompaction(),
@@ -167,6 +174,8 @@ export function createSessionControls(session: ControllableSession, cwd: string)
       visit(manager.getTree(), 0);
       return items;
     },
+    rawTree: () => manager.getTree(),
+    leafId: () => manager.getLeafId(),
     navigate: (entryId) => session.navigateTree(resolveEntryId(manager, entryId), { summarize: false }),
     fork: (entryId) => {
       const source = manager.getSessionFile();

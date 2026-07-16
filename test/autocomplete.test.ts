@@ -25,10 +25,13 @@ function sessionControls(): SessionControls {
   return {
     snapshot: () => ({ id: "session", persisted: true, autoCompaction: true, compacting: false }),
     list: async () => [],
+    listAll: async () => [],
     setName: () => {},
     compact: async () => ({ summary: "", firstKeptEntryId: "entry", tokensBefore: 0 }),
     abortCompaction: () => {},
     tree: () => [{ id: "entry-123", parentId: null, depth: 0, type: "message", preview: "user: inspect repo", isLeaf: true }],
+    rawTree: () => [],
+    leafId: () => "entry-123",
     navigate: async () => ({ cancelled: false }),
     fork: () => ({ id: "fork", file: "/tmp/fork.jsonl" }),
     clone: () => ({ id: "clone", file: "/tmp/clone.jsonl" }),

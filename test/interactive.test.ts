@@ -5,6 +5,7 @@ import {
   AuthStorage,
   type CreateAgentSessionOptions,
   ModelRegistry,
+  type SessionTreeNode,
   type SessionStats,
 } from "@earendil-works/pi-coding-agent";
 import type { Terminal } from "@earendil-works/pi-tui";
@@ -207,10 +208,12 @@ function createSessionControls(): SessionControls & {
       modified: new Date("2026-07-15T01:00:00Z"),
       messageCount: 6,
       firstMessage: "first task",
+      allMessagesText: "first task",
       cwd: process.cwd(),
       model: "deepseek/deepseek-v4-flash",
       path: "/tmp/session-test-id.jsonl",
     }],
+    listAll: async () => [],
     setName: (name: string) => { names.push(name); },
     compact: async (instructions?: string) => {
       compactions.push(instructions);
@@ -218,6 +221,17 @@ function createSessionControls(): SessionControls & {
     },
     abortCompaction: () => { controls.compactionAborts += 1; },
     tree: () => [{ id: "entry-1", parentId: null, depth: 0, type: "message", preview: "user: first task", isLeaf: true }],
+    rawTree: () => [{
+      entry: {
+        type: "message",
+        id: "entry-1",
+        parentId: null,
+        timestamp: "2026-07-15T00:00:00.000Z",
+        message: { role: "user", content: "first task", timestamp: 0 },
+      },
+      children: [],
+    }] satisfies SessionTreeNode[],
+    leafId: () => "entry-1",
     navigate: async (entryId: string) => {
       navigations.push(entryId);
       return { cancelled: false };
@@ -416,11 +430,16 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
 
   terminal.type("/session");
   await flush();
-  terminal.type("/sessions");
+  terminal.type("/sessions list");
   await flush();
   terminal.type("/name demo session");
   await flush();
   terminal.type("/compact keep the goal");
+  await flush();
+  terminal.type("/tree");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /Session Tree/);
+  terminal.send("\x1b");
   await flush();
   terminal.type("/tree entry-1");
   await flush();
@@ -456,6 +475,51 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
 
   terminal.type("/exit");
   await running;
+});
+
+test("selects another persisted session through the Pi session selector", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const snapshot = createSnapshot();
+  const sessionControls = createSessionControls();
+  sessionControls.list = async () => [{
+    id: "other-session-id",
+    created: new Date("2026-07-15T00:00:00Z"),
+    modified: new Date("2026-07-15T01:00:00Z"),
+    messageCount: 4,
+    firstMessage: "continue the other task",
+    allMessagesText: "continue the other task",
+    cwd: process.cwd(),
+    model: "deepseek/deepseek-v4-flash",
+    path: "/tmp/other-session-id.jsonl",
+  }];
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    agentMode: "build",
+    sessionControls,
+    terminal,
+    clearContext: () => undefined,
+    getContextSnapshot: () => snapshot,
+    setProjectResourcesEnabled: async () => undefined,
+    setAgentMode: () => undefined,
+    getGitStatus: async () => ({ available: true, status: "" }),
+  });
+  const running = mode.run();
+  await flush();
+
+  terminal.type("/sessions");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /Resume Session \(Current/);
+  assert.match(plainTerminalOutput(terminal), /continue the other task/);
+  terminal.send("\r");
+
+  assert.deepEqual(await running, { type: "resume", target: "/tmp/other-session-id.jsonl" });
 });
 
 test("queues steering while streaming and Ctrl+C aborts the active run", async () => {

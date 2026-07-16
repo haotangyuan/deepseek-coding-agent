@@ -103,6 +103,7 @@ export interface CliDependencies {
     model: SelectedModel;
     restoreSavedModel: boolean;
     thinkingLevel?: DeepSeekThinkingLevel;
+    thinkingExplicit: boolean;
     approvalMode: ApprovalMode;
     agentMode: AgentMode;
     sessionSelection: SessionSelection;
@@ -184,66 +185,73 @@ function productionDependencies(): CliDependencies {
       interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
     }),
     createSession: createProductionSession,
-    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, approvalMode, agentMode, sessionSelection }) => {
-      let approvalHandler: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
-      const toolPolicy = createToolPolicy({
-        cwd,
-        mode: approvalMode,
-        agentMode,
-        approve: (request) => approvalHandler?.(request) ?? Promise.resolve("deny"),
-      });
-      const resourceFilter = createProjectResourceFilter(cwd, agentDir);
-      const created = await createProductionSession({
-        authStorage,
-        modelRegistry,
-        model,
-        restoreSavedModel,
-        thinkingLevel,
-        toolPolicy,
-        tools: activeToolsForAgentMode(approvalMode, agentMode),
-        sessionSelection,
-        resourceFilter,
-      });
-      const mode = new InteractiveMode({
-        session: created.session,
-        modelRegistry,
-        cwd,
-        approvalMode,
-        agentMode,
-        sessionControls: createSessionControls(created.session, cwd),
-        clearContext: () => {
-          created.session.sessionManager.resetLeaf();
-          created.session.agent.reset();
-        },
-        getContextSnapshot: () => captureContextSnapshot({
-          loader: created.resourceLoader,
+    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, thinkingExplicit, approvalMode, agentMode, sessionSelection }) => {
+      let activeSelection = sessionSelection;
+      let activeThinkingLevel = thinkingLevel;
+      while (true) {
+        let approvalHandler: ((request: ApprovalRequest) => Promise<ApprovalDecision>) | undefined;
+        const toolPolicy = createToolPolicy({
           cwd,
-          agentDir: created.agentDir,
-          projectResourcesEnabled: resourceFilter.isEnabled(),
-          effectiveSystemPrompt: created.session.systemPrompt,
-          activeTools: created.session.getActiveToolNames(),
-        }),
-        setProjectResourcesEnabled: async (enabled) => {
-          resourceFilter.setEnabled(enabled);
-          try {
-            await created.session.reload();
-          } catch (error) {
-            resourceFilter.setEnabled(!enabled);
-            await created.session.reload();
-            throw error;
-          }
-        },
-        setAgentMode: (nextMode) => {
-          created.session.setActiveToolsByName(activeToolsForAgentMode(approvalMode, nextMode));
-          toolPolicy.setAgentMode(nextMode);
-        },
-        getGitStatus,
-      });
-      approvalHandler = (request) => mode.requestApproval(request);
-      try {
-        await mode.run();
-      } finally {
-        created.session.dispose();
+          mode: approvalMode,
+          agentMode,
+          approve: (request) => approvalHandler?.(request) ?? Promise.resolve("deny"),
+        });
+        const resourceFilter = createProjectResourceFilter(cwd, agentDir);
+        const created = await createProductionSession({
+          authStorage,
+          modelRegistry,
+          model,
+          restoreSavedModel,
+          thinkingLevel: activeThinkingLevel,
+          toolPolicy,
+          tools: activeToolsForAgentMode(approvalMode, agentMode),
+          sessionSelection: activeSelection,
+          resourceFilter,
+        });
+        const mode = new InteractiveMode({
+          session: created.session,
+          modelRegistry,
+          cwd,
+          approvalMode,
+          agentMode,
+          sessionControls: createSessionControls(created.session, cwd),
+          clearContext: () => {
+            created.session.sessionManager.resetLeaf();
+            created.session.agent.reset();
+          },
+          getContextSnapshot: () => captureContextSnapshot({
+            loader: created.resourceLoader,
+            cwd,
+            agentDir: created.agentDir,
+            projectResourcesEnabled: resourceFilter.isEnabled(),
+            effectiveSystemPrompt: created.session.systemPrompt,
+            activeTools: created.session.getActiveToolNames(),
+          }),
+          setProjectResourcesEnabled: async (enabled) => {
+            resourceFilter.setEnabled(enabled);
+            try {
+              await created.session.reload();
+            } catch (error) {
+              resourceFilter.setEnabled(!enabled);
+              await created.session.reload();
+              throw error;
+            }
+          },
+          setAgentMode: (nextMode) => {
+            created.session.setActiveToolsByName(activeToolsForAgentMode(approvalMode, nextMode));
+            toolPolicy.setAgentMode(nextMode);
+          },
+          getGitStatus,
+        });
+        approvalHandler = (request) => mode.requestApproval(request);
+        try {
+          const nextSelection = await mode.run();
+          if (!nextSelection) return;
+          activeSelection = nextSelection;
+          if (!thinkingExplicit) activeThinkingLevel = undefined;
+        } finally {
+          created.session.dispose();
+        }
       }
     },
     getGitStatus,
@@ -321,8 +329,9 @@ export async function runCli(
     try {
       await dependencies.runInteractive({
         model,
-        restoreSavedModel: !parsed.modelExplicit && restoreSession,
+        restoreSavedModel: !parsed.modelExplicit,
         thinkingLevel,
+        thinkingExplicit: parsed.thinkingExplicit,
         approvalMode: parsed.approvalMode,
         agentMode: parsed.agentMode,
         sessionSelection: parsed.session,
