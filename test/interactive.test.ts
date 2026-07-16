@@ -15,6 +15,7 @@ import {
   parseInteractiveCommand,
 } from "../src/interactive.ts";
 import type { ContextSnapshot } from "../src/context-resources.ts";
+import { TurnCheckpointManager } from "../src/checkpoints.ts";
 import type { SessionControls } from "../src/sessions.ts";
 
 type SelectedModel = NonNullable<CreateAgentSessionOptions["model"]>;
@@ -259,6 +260,8 @@ test("parses supported interactive commands without treating normal prompts as c
   assert.deepEqual(parseInteractiveCommand("/model deepseek-v4-pro"), { name: "model", argument: "deepseek-v4-pro" });
   assert.deepEqual(parseInteractiveCommand("/thinking high"), { name: "thinking", argument: "high" });
   assert.deepEqual(parseInteractiveCommand("/cache"), { name: "cache", argument: "" });
+  assert.deepEqual(parseInteractiveCommand("/diff"), { name: "diff", argument: "" });
+  assert.deepEqual(parseInteractiveCommand("/undo confirm"), { name: "undo", argument: "confirm" });
   assert.deepEqual(parseInteractiveCommand("/mode plan"), { name: "mode", argument: "plan" });
   assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
 });
@@ -278,6 +281,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
     cwd: process.cwd(),
     approvalMode: "ask",
     agentMode: "build",
+    checkpoints: new TurnCheckpointManager(process.cwd()),
     sessionControls,
     terminal,
     clearContext: () => { clears += 1; },
@@ -477,6 +481,69 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   await running;
 });
 
+test("renders the latest turn diff and requires explicit confirmation before undo", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const snapshot = createSnapshot();
+  let undoCalls = 0;
+  const checkpoints = {
+    snapshot: () => ({
+      status: "ready" as const,
+      files: ["src/example.ts"],
+      bashObserved: true,
+      warnings: [],
+    }),
+    diff: () => ({
+      files: ["src/example.ts"],
+      patch: "--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1 +1 @@\n-before\n+after",
+      bashObserved: true,
+      warnings: [],
+    }),
+    undo: async () => {
+      undoCalls += 1;
+      return { restoredFiles: ["src/example.ts"] };
+    },
+  };
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    agentMode: "build",
+    checkpoints,
+    sessionControls: createSessionControls(),
+    terminal,
+    clearContext: () => undefined,
+    getContextSnapshot: () => snapshot,
+    setProjectResourcesEnabled: async () => undefined,
+    setAgentMode: () => undefined,
+    getGitStatus: async () => ({ available: true, status: " M src/example.ts" }),
+  });
+  const running = mode.run();
+  await flush();
+
+  terminal.type("/diff");
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /TURN DIFF · 1 FILE.*-before.*\+after/s);
+  assert.match(plainTerminalOutput(terminal), /Bash side effects are not included/);
+
+  terminal.type("/undo");
+  await flush();
+  assert.equal(undoCalls, 0);
+  assert.match(plainTerminalOutput(terminal), /UNDO READY · 1 FILE.*\/undo confirm/s);
+
+  terminal.type("/undo confirm");
+  await flush();
+  assert.equal(undoCalls, 1);
+  assert.match(plainTerminalOutput(terminal), /UNDO COMPLETE.*src\/example\.ts.*conversation remains/s);
+
+  terminal.type("/exit");
+  await running;
+});
+
 test("selects another persisted session through the Pi session selector", async () => {
   const registry = createRegistry();
   const model = registry.find("deepseek", "deepseek-v4-flash");
@@ -502,6 +569,7 @@ test("selects another persisted session through the Pi session selector", async 
     cwd: process.cwd(),
     approvalMode: "ask",
     agentMode: "build",
+    checkpoints: new TurnCheckpointManager(process.cwd()),
     sessionControls,
     terminal,
     clearContext: () => undefined,
@@ -536,6 +604,7 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
     cwd: process.cwd(),
     approvalMode: "ask",
     agentMode: "build",
+    checkpoints: new TurnCheckpointManager(process.cwd()),
     sessionControls,
     terminal,
     clearContext: () => undefined,

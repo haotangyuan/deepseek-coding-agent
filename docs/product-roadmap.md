@@ -462,8 +462,9 @@ npm test
 | Done | Doctor 与 Pi 兼容门 | 已完成离线诊断、降级提示和深海蓝/冰青双模式输出 |
 | Done | TUI 命令与安全文件补全 | 已完成动态命令、DeepSeek 模型、资源、树节点和工作区文件补全 |
 | Done | Pi Session/Tree 选择器 | 已完成搜索、过滤、取消、树导航和当前工作区会话热切换 |
-| P0 | 本轮 Diff 与 Undo | 继续降低审阅和误修改恢复成本 |
-| P1 | 显式验证闭环与 DeepSeek 优化 | 在可逆修改基础上提升完成率、缓存和成本表现 |
+| Done | 本轮 Diff 与 Undo | 已完成本轮聚合补丁、冲突保护、Resume 和显式文件恢复 |
+| P0 | 显式验证闭环 | 在可逆修改基础上减少“改了但未验证”的不完整任务 |
+| P1 | DeepSeek 量化优化 | 用固定任务提升完成率、缓存和成本表现 |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
@@ -525,9 +526,11 @@ npm test
 | D-036 | UI 视觉、交互和动态效果作为每个功能的验收条件 | 已采纳 | 统一语义色和宽度适配；动态只表达真实状态，不能用装饰性动画掩盖延迟 |
 | D-037 | TUI 补全复用 Pi Editor/CombinedAutocompleteProvider，并在产品层动态组装和安全过滤 | 已采纳 | 保持 Pi 差分渲染与键盘体验；只显示 DeepSeek 模型，文件候选限制在工作区并隐藏敏感路径 |
 | D-038 | Session/Tree 直接复用 Pi 选择器，Session 切换通过销毁并重建 AgentSession 完成 | 已采纳 | 选择器像 Pi 一样临时替换输入区；保留搜索、排序、过滤和树交互，避免旧 Runtime 直接替换 JSONL 造成内存状态漂移，跨工作区会话保持只读可见但拒绝切换 |
+| D-039 | 本轮 Undo 使用 write/edit pre/post-image，不直接执行 Git stash apply | 已采纳 | 保留任务开始前已有脏内容；恢复前验证磁盘仍等于 post-image，冲突时整次拒绝。Bash 副作用明确不在保证范围 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成本轮 Diff 与安全文件 Undo。Pi Extension 在 `agent_start/tool_call/agent_settled` 记录 write/edit pre/post-image；`/diff` 展示聚合 unified patch，`/undo confirm` 经全文件冲突检查后恢复已有文件或删除新文件。每个 Session 的最新 checkpoint 以 `0600` 保存在产品私有目录，支持 resume，成功恢复后删除；Bash 副作用明确不覆盖。72/72 自动化通过。
 - **2026-07-16：** 完成 Pi Session/Tree 选择器。`/sessions` 接入 Pi 搜索、排序、范围、路径和删除确认界面；同工作区选择后销毁旧 Session 并从 JSONL 重建，跨工作区选择明确拒绝；`/tree` 接入 Pi 原生搜索、过滤、折叠与节点导航，文本 `list` 模式保留。63/63 自动化通过。
 - **2026-07-16：** 完成 TUI 输入补全。`/` 动态展示本项目命令、Skill 和 Prompt Template；模型、thinking、mode、resources、tree/fork 参数可补全；`@` 和 Tab 文件候选限制在工作区并过滤敏感路径。80×24 渲染路径和纯函数测试纳入 62/62 自动化验证。
 - **2026-07-16：** 完成 Doctor 与 Pi 兼容门。新增离线 `--doctor`、模型/凭据存在性、Git、rg/fd、Session、TTY 和资源诊断；TTY 使用深海蓝/冰青语义色，纯文本自动降级，60/60 自动化与本机 TTY/non-TTY smoke 通过。

@@ -27,6 +27,7 @@ import {
 import { relative } from "node:path";
 import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
 import { CacheInspector, formatCacheReport, type CacheReport } from "./cache-inspector.ts";
+import { type TurnCheckpointControls } from "./checkpoints.ts";
 import { createInteractiveAutocompleteProvider } from "./autocomplete.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
@@ -74,6 +75,7 @@ export interface InteractiveModeOptions {
   cwd: string;
   approvalMode: ApprovalMode;
   agentMode: AgentMode;
+  checkpoints: TurnCheckpointControls;
   sessionControls: SessionControls;
   terminal?: Terminal;
   clearContext(): void;
@@ -84,8 +86,8 @@ export interface InteractiveModeOptions {
 }
 
 export type InteractiveCommand =
-  | { name: "help" | "status" | "cache" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
-  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork"; argument: string }
+  | { name: "help" | "status" | "cache" | "diff" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
+  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -175,14 +177,14 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
   const separator = trimmed.indexOf(" ");
   const name = trimmed.slice(1, separator === -1 ? undefined : separator).toLowerCase();
   const argument = separator === -1 ? "" : trimmed.slice(separator + 1).trim();
-  if (["help", "status", "cache", "clear", "exit", "reasoning", "context", "agents", "skills", "prompts", "session", "sessions", "clone"].includes(name)) {
+  if (["help", "status", "cache", "diff", "clear", "exit", "reasoning", "context", "agents", "skills", "prompts", "session", "sessions", "clone"].includes(name)) {
     return {
-      name: name as "help" | "status" | "cache" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone",
+      name: name as "help" | "status" | "cache" | "diff" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone",
       argument,
     };
   }
-  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork"].includes(name)) {
-    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork", argument };
+  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork", "undo"].includes(name)) {
+    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo", argument };
   }
   return { name: "unknown", argument: name };
 }
@@ -246,6 +248,41 @@ class NoticeCard implements Component {
     ];
     if (this.content.action) lines.push(...body("Next: ", this.content.action));
     lines.push(this.content.tone(truncateToWidth(`╰─ ${this.content.footer}`, available)));
+    return lines;
+  }
+}
+
+class TurnDiffCard implements Component {
+  private readonly files: string[];
+  private readonly patch: string;
+  private readonly warning: string | undefined;
+
+  constructor(files: string[], patch: string, warning?: string) {
+    this.files = files;
+    this.patch = patch;
+    this.warning = warning;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const available = Math.max(1, width);
+    const bodyWidth = Math.max(1, available - 2);
+    const patchLines = this.patch.split("\n");
+    const visible = patchLines.slice(0, 18).map((line) => {
+      const clipped = truncateToWidth(line, bodyWidth);
+      if (line.startsWith("+") && !line.startsWith("+++")) return colors.success(clipped);
+      if (line.startsWith("-") && !line.startsWith("---")) return colors.error(clipped);
+      if (line.startsWith("@@")) return colors.accent(clipped);
+      return clipped;
+    });
+    if (patchLines.length > visible.length) visible.push(colors.dim(`… ${patchLines.length - visible.length} more diff lines`));
+    const lines = [
+      colors.ice(truncateToWidth(`╭─ TURN DIFF · ${this.files.length} FILE${this.files.length === 1 ? "" : "S"}`, available)),
+      ...visible.map((line) => truncateToWidth(`│ ${line}`, available)),
+    ];
+    if (this.warning) lines.push(colors.warning(truncateToWidth(`│ Warning: ${this.warning}`, available)));
+    lines.push(colors.ice(truncateToWidth("╰─ /undo to review rollback · /undo confirm to apply", available)));
     return lines;
   }
 }
@@ -513,7 +550,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /cache /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /cache /diff /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -523,6 +560,10 @@ export class InteractiveMode {
       );
     } else if (command.name === "cache") {
       this.showCacheReport(this.cacheInspector.current(this.session.getSessionStats()));
+    } else if (command.name === "diff") {
+      this.showTurnDiff();
+    } else if (command.name === "undo") {
+      await this.handleUndo(command.argument);
     } else if (command.name === "session") {
       this.showSession();
     } else if (command.name === "sessions") {
@@ -1097,6 +1138,71 @@ export class InteractiveMode {
       footer: "DeepSeek usage via Pi · no extra request",
       tone: report.alert ? colors.warning : colors.ice,
     }));
+  }
+
+  private showTurnDiff(): void {
+    const snapshot = this.options.checkpoints.snapshot();
+    if (snapshot.status === "recording") {
+      this.addError("wait for the active agent turn before reviewing its diff");
+      return;
+    }
+    const diff = this.options.checkpoints.diff();
+    if (diff.files.length === 0) {
+      const detail = snapshot.status === "undone"
+        ? "The latest write/edit checkpoint has already been undone."
+        : "No write/edit changes were recorded for the latest mutating turn.";
+      this.transcript.addChild(new NoticeCard({
+        title: "TURN DIFF · EMPTY",
+        detail,
+        action: [
+          diff.bashObserved ? "Bash ran in that turn; its filesystem side effects are outside automatic Undo." : undefined,
+          ...snapshot.warnings,
+        ].filter((warning) => warning !== undefined).join(" ") || undefined,
+        footer: "No workspace files changed by tracked Pi write/edit tools",
+        tone: colors.dim,
+      }));
+      return;
+    }
+    const warnings = [
+      diff.bashObserved ? "Bash side effects are not included in automatic Undo." : undefined,
+      ...diff.warnings,
+    ].filter((warning) => warning !== undefined).join(" ");
+    this.transcript.addChild(new TurnDiffCard(diff.files, diff.patch, warnings || undefined));
+  }
+
+  private async handleUndo(argument: string): Promise<void> {
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("cancel the active operation before undoing file changes");
+      return;
+    }
+    const snapshot = this.options.checkpoints.snapshot();
+    if (snapshot.status !== "ready" || snapshot.files.length === 0) {
+      this.addError("no undoable write/edit changes are available for the latest mutating turn");
+      return;
+    }
+    if (argument !== "confirm") {
+      this.transcript.addChild(new NoticeCard({
+        title: `UNDO READY · ${snapshot.files.length} FILE${snapshot.files.length === 1 ? "" : "S"}`,
+        detail: snapshot.files.join(", "),
+        action: "Review /diff, then run /undo confirm. Undo restores files only; conversation history is preserved.",
+        footer: snapshot.bashObserved ? "Bash side effects are not covered" : "Conflict check runs before any file is restored",
+        tone: colors.warning,
+      }));
+      return;
+    }
+    try {
+      const result = await this.options.checkpoints.undo();
+      this.transcript.addChild(new NoticeCard({
+        title: "UNDO COMPLETE",
+        detail: result.restoredFiles.join(", "),
+        action: "Continue with a corrected instruction; the prior conversation remains in the Session tree.",
+        footer: snapshot.bashObserved ? "write/edit restored · Bash side effects unchanged" : "write/edit files restored",
+        tone: colors.success,
+      }));
+      await this.showGitStatusIfChanged();
+    } catch (error) {
+      this.addError(`undo failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private resetTurnComponents(): void {

@@ -14,6 +14,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
+import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -27,6 +28,7 @@ import {
   usage,
 } from "./cli.ts";
 import { CacheInspector, formatCacheReport } from "./cache-inspector.ts";
+import { createTurnCheckpointExtension, TurnCheckpointManager } from "./checkpoints.ts";
 import {
   captureContextSnapshot,
   createProjectResourceFilter,
@@ -145,6 +147,13 @@ function productionDependencies(): CliDependencies {
       sessionDir,
       selection: options.sessionSelection,
     });
+    const checkpoints = new TurnCheckpointManager(
+      cwd,
+      options.sessionSelection.type === "memory"
+        ? undefined
+        : join(sessionDir, ".checkpoints", `${sessionManager.getSessionId()}.json`),
+    );
+    await checkpoints.load();
     const model = resolveSessionModel(options.modelRegistry, options.model, sessionManager, options.restoreSavedModel);
     const resourceFilter = options.resourceFilter ?? createProjectResourceFilter(cwd, agentDir);
     const resourceLoader = new DefaultResourceLoader({
@@ -152,7 +161,7 @@ function productionDependencies(): CliDependencies {
       agentDir,
       settingsManager,
       noExtensions: true,
-      extensionFactories: [createToolPolicyExtension(options.toolPolicy)],
+      extensionFactories: [createToolPolicyExtension(options.toolPolicy), createTurnCheckpointExtension(checkpoints)],
       skillsOverride: resourceFilter.skillsOverride,
       promptsOverride: resourceFilter.promptsOverride,
       agentsFilesOverride: resourceFilter.agentsFilesOverride,
@@ -169,7 +178,7 @@ function productionDependencies(): CliDependencies {
       settingsManager,
       sessionManager,
     });
-    return { ...created, resourceLoader, resourceFilter, agentDir };
+    return { ...created, resourceLoader, resourceFilter, agentDir, checkpoints };
   };
   return {
     cwd,
@@ -214,6 +223,7 @@ function productionDependencies(): CliDependencies {
           cwd,
           approvalMode,
           agentMode,
+          checkpoints: created.checkpoints,
           sessionControls: createSessionControls(created.session, cwd),
           clearContext: () => {
             created.session.sessionManager.resetLeaf();

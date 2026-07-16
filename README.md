@@ -22,6 +22,7 @@
 - 直接复用 Pi 的 read/ls/grep 做受限仓库探索；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
 - 默认保护 `.env`、常见凭据目录/文件和 SSH 私钥名；公开的 `.env.example/.sample/.template` 仍可读写，明显 Bash 敏感路径字面量在审批前阻断。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
+- 通过 `/diff` 集中审阅最近修改轮次的 write/edit 增量；`/undo` + `/undo confirm` 在冲突检查后恢复任务前文件状态，并支持 Session resume 后继续撤销。
 - 每轮 settled 后展示 Completion Evidence：明确记录 write/edit 文件、实际 diff 查看、可识别验证结果和错误事实；不自动追加付费模型轮次，也不把未知命令猜成测试。
 - Cache Inspector 展示本轮和 Session 累计 cache hit/miss/rate；`/cache` 可随时重看，只有相邻足量轮次下降至少 20pp 才提示事实型告警。
 - 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消；Provider/工具失败、自动重试和取消使用 80 列友好的紧凑恢复卡片。
@@ -30,7 +31,7 @@
 - 一次性任务支持显式 `off/high/max` thinking、内存 Session 和结构化指标；固定评测默认 dry-run，只有 `--live` 才调用真实 API。
 - Provider 错误按 DeepSeek 官方 400/401/402/422/429/500/503 语义显示分类、是否可重试和下一步动作；原始详情先遮蔽敏感值。
 - 支持 `--doctor` 离线检查 Node、DeepSeek 模型与凭据存在性、Git、rg/fd、Session 可写性、TTY 和上下文资源；不会创建 Session 或调用模型。
-- 暂未实现图形化会话选择器、跨工作区恢复、MCP 和多 Agent。
+- 已复用 Pi Session/Tree 选择器；跨工作区恢复、MCP 和多 Agent 仍不在当前范围。
 
 ## 安装
 
@@ -80,11 +81,13 @@ npm start
 /help
 /status
 /cache
+/diff
+/undo [confirm]
 /session
-/sessions
+/sessions [list]
 /name [title]
 /compact [instructions]
-/tree [entry-id]
+/tree [entry-id|list]
 /fork <entry-id>
 /clone
 /model [deepseek-model-id]
@@ -102,6 +105,8 @@ npm start
 
 Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steering 排队；Ctrl+C 取消当前运行，空闲时连续两次 Ctrl+C 退出。reasoning 默认只显示长度，通过 `/reasoning` 展开或重新折叠。
 
+`/diff` 展示最近一个包含 Pi write/edit 的 Agent 轮次，而不是整个 Git 工作区的混合差异。`/undo` 先显示恢复范围，只有 `/undo confirm` 才写入磁盘；如果文件在 Agent 完成后又被用户或其他进程修改，整次撤销会被拒绝。Bash 副作用不在自动撤销范围内。详细边界见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)。
+
 `/cache` 直接读取 Pi 已归一化的 DeepSeek usage：本轮通过提交前后 SessionStats 做差，Session 数值包含 JSONL 全历史的实际计费 usage。它不会为了诊断缓存再发送请求，也不会猜测命中下降原因。
 
 `/context` 展示当前有效 System Prompt 的字符数和粗略 token、活动工具及资源数量；`/agents`、`/skills`、`/prompts` 展示真实来源路径和作用域。`/resources off` 只在当前进程内移除项目/祖先 AGENTS 和项目级 Skills/Prompts，再调用 Pi `AgentSession.reload()`；用户级资源继续保留。上下文开关不改变工具审批模式，两者是独立边界。
@@ -110,7 +115,7 @@ Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steerin
 
 已加载的 Skill 可用 `/skill:name 参数` 显式调用，Prompt Template 可用 `/name 参数` 调用。模型可见的 Skills 仍由 Pi 按需读取，不会由本项目复制进 System Prompt。
 
-会话默认保存在 Pi agentDir 下独立的 `deepseek-code-sessions` 目录，不与 Pi CLI 默认会话目录混用。`/sessions` 展示标题、创建/更新时间、模型和消息数；`/tree` 展示 append-only 消息树，`/tree <entry-id>`移动当前 leaf 而不删除旧分支。`/fork` 和 `/clone` 创建新 JSONL，并输出可用于恢复的新 ID。
+会话默认保存在 Pi agentDir 下独立的 `deepseek-code-sessions` 目录，不与 Pi CLI 默认会话目录混用。`/sessions` 打开 Pi 搜索/过滤选择器，`/sessions list` 保留文本列表；`/tree` 打开 append-only 消息树选择器，`/tree <entry-id>`移动当前 leaf 而不删除旧分支。`/fork` 和 `/clone` 创建新 JSONL，并输出可用于恢复的新 ID。
 
 也可以运行一次性任务：
 
@@ -209,7 +214,8 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 
 ## 当前限制
 
-- 当前没有图形化 Session selector；恢复目标通过 `--resume <id|path>` 明确指定。
+- Session 选择器只允许热切换到当前工作区会话；跨工作区条目可浏览但会拒绝切换。
+- 自动 Undo 只覆盖 Pi write/edit；Bash、包安装、数据库和外部系统副作用需要用户自行恢复。Checkpoint 保存在本地私有目录，不是加密存储。
 - `/fork` 和 `/clone` 创建新文件但不会在当前进程偷偷切换；按提示重新使用 `--resume` 进入新会话。
 - Compaction summary 由当前 DeepSeek 模型生成，会产生一次模型请求；过短或刚压缩过的会话会由 Pi 拒绝重复压缩。
 - `/context` 的 token 数按 4 字符约 1 token 粗估，不是 Provider tokenizer 的精确计数；资源开关重启进程后恢复开启。
@@ -223,7 +229,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。本轮 Diff/Undo 见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 

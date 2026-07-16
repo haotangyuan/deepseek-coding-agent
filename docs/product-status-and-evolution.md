@@ -113,7 +113,7 @@ flowchart TB
 | 事件输出 | text、thinking、tool、retry、error、complete 分通道输出并脱敏 | `src/cli.ts:199` `formatAgentEvent()`；`test/cli.test.ts` | 稳定 |
 | Agent Loop | 直接通过 Pi `createAgentSession()`，不复制循环 | `src/main.ts:124` `productionDependencies()`；`src/main.ts:160` | 稳定，依赖 Pi |
 | 仓库探索 | read、ls、grep；受 cwd、realpath、symlink 和敏感路径保护 | `src/tool-policy.ts:96`、`:233`；`test/tool-policy.test.ts` | 可用；缺 find 依赖诊断 |
-| 修改与命令 | write/edit/bash 默认询问；diff 预览；危险命令阻断；Bash 可按完全相同命令在进程内授权 | `src/tool-policy.ts:134`、`:147`、`:197`、`:239` | 可用；缺本轮撤销 |
+| 修改与命令 | write/edit/bash 默认询问；审批 diff；本轮聚合 `/diff`；冲突安全 `/undo confirm`；Bash 精确授权 | `src/tool-policy.ts`；`src/checkpoints.ts` `TurnCheckpointManager`；`test/checkpoints.test.ts` | write/edit 可逆；Bash 副作用不覆盖 |
 | Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
 | 交互 TUI | 多轮、Markdown、折叠 thinking、工具卡、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`；`src/autocomplete.ts` `createInteractiveAutocompleteProvider()`；`test/interactive.test.ts`、`test/autocomplete.test.ts` | 日用可用；工具卡仍需折叠 |
 | 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；可临时过滤项目资源并 reload | `src/context-resources.ts:61`、`:92`；`test/context-resources.test.ts` | 稳定；缺启动信任选择 |
@@ -123,7 +123,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 63 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、Pi Session/Tree 选择器、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 72 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -138,13 +138,11 @@ flowchart TB
 
 ### 5.2 仍然会造成日常摩擦
 
-1. **启动缺少集中诊断**：Node、Git、rg、可选 fd、API 凭据、模型、终端能力和工作区状态分散在不同错误里。
-2. **能预览修改但不能可靠撤销本轮修改**：用户拒绝前安全，批准后主要依赖 Git 手工恢复。
-3. **Evidence 只提醒，不帮助完成下一步**：发现“改了但未验证”后，仍需用户自己重新输入指令。
-4. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
-5. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
-6. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
-7. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+1. **Evidence 只提醒，不帮助完成下一步**：发现“改了但未验证”后，仍需用户自己重新输入指令。
+2. **工具卡信息层级不足**：长 Bash、长参数和长结果缺少折叠/展开与更清晰的退出状态。
+3. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
+4. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
+5. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
 
 ## 6. 外部产品带来的设计启发
 
@@ -253,18 +251,30 @@ flowchart TB
 
 ### P0-C：本轮 Diff 与安全撤销
 
+状态：**已完成（2026-07-16）。**
+
 目标：用户敢于批准修改，因为能够清楚查看并可靠撤销本轮文件操作。
 
 最小设计：
 
 - 在 write/edit 执行前记录受影响文件的 pre-image；执行后记录 post-image 和工具调用 ID。
 - 每个用户 prompt 形成一个本轮文件 checkpoint。
-- `/diff` 展示本轮聚合 diff，优先复用 Pi 导出的 `renderDiff`。
+- `/diff` 展示本轮聚合 diff，复用 Pi 导出的 `generateUnifiedPatch()`。
 - `/undo` 只恢复本轮由 write/edit 改动的文件。
 - 撤销前校验磁盘当前内容仍等于记录的 post-image；如果用户或其他进程已再次修改，拒绝覆盖并展示冲突文件。
 - 新文件撤销为删除，原文件撤销为恢复；只处理工作区内普通文件和经过现有策略批准的路径。
 - Bash、副作用命令、包安装、数据库和工作区外变化明确不在撤销范围内。
 - checkpoint 跟随 Session 保存，但不把完整敏感内容写入普通日志；文件快照目录加入生命周期清理。
+
+实际交付：
+
+- 新增 `TurnCheckpointManager` 与 Pi Inline Extension，在 `agent_start` 开轮、批准后的 `tool_call(write/edit)` 捕获第一次 pre-image、`agent_settled` 固化最终 post-image。
+- `/diff` 使用 Pi `generateUnifiedPatch()` 聚合本轮文件增量，深海蓝/冰青卡片保留增删行语义色并限制终端高度。
+- `/undo` 只展示范围；`/undo confirm` 先校验全部 current == post-image，再统一恢复。任一冲突时零文件写入。
+- 已有文件恢复内容与 mode，新文件删除；同文件多次编辑仍回到本轮开始状态，只读轮次不冲掉最近可撤销 checkpoint。
+- 每个 Session 仅保存一份 `.checkpoints/<session-id>.json`，目录 `0700`、文件 `0600`，不进入 JSONL/日志/Git；Resume 可继续 Undo，成功后删除。
+- Bash 只记录边界警告，不宣称自动恢复其文件、依赖、数据库或外部副作用。
+- 详细设计见 `docs/turn-diff-undo.md`。
 
 验收：
 
@@ -382,11 +392,13 @@ flowchart TB
 
 完成证据：命令/资源/DeepSeek 模型/安全文件补全、Pi Session/Tree 选择器和同工作区 Session 重建均已落地；63/63 自动化通过，真实 TTY 验收不调用模型。
 
-### Iteration 3：本轮 Diff 与文件 Undo
+### Iteration 3：本轮 Diff 与文件 Undo（已完成）
 
 预计修改：新增 `src/checkpoints.ts`，在 Tool Policy hook 和 TUI 命令接入；增加临时目录集成测试。
 
 成功标准：write/edit 多文件任务可查看聚合 diff并安全撤销；检测外部冲突；不使用破坏性 Git 命令。
+
+完成证据：pre/post-image、聚合 patch、显式二次确认、冲突整次拒绝、权限/新文件恢复和 Resume 已覆盖；72/72 自动化与临时 Git 仓库 TTY 验收通过。
 
 ### Iteration 4：显式验证闭环
 
