@@ -263,6 +263,8 @@ test("parses supported interactive commands without treating normal prompts as c
   assert.deepEqual(parseInteractiveCommand("/diff"), { name: "diff", argument: "" });
   assert.deepEqual(parseInteractiveCommand("/verify confirm"), { name: "verify", argument: "confirm" });
   assert.deepEqual(parseInteractiveCommand("/tool bash-1"), { name: "tool", argument: "bash-1" });
+  assert.deepEqual(parseInteractiveCommand("/settings approval deny"), { name: "settings", argument: "approval deny" });
+  assert.deepEqual(parseInteractiveCommand("/trust once"), { name: "trust", argument: "once" });
   assert.deepEqual(parseInteractiveCommand("/undo confirm"), { name: "undo", argument: "confirm" });
   assert.deepEqual(parseInteractiveCommand("/mode plan"), { name: "mode", argument: "plan" });
   assert.deepEqual(parseInteractiveCommand("/missing"), { name: "unknown", argument: "missing" });
@@ -614,6 +616,89 @@ test("renders streaming Bash cards and expands results without losing the comman
   await flush();
   assert.doesNotMatch(plainTerminalOutput(terminal), /sk-should-not-render/);
   assert.match(plainTerminalOutput(terminal), /DEEPSEEK_API_KEY=\[REDACTED\]/);
+
+  terminal.type("/exit");
+  await running;
+});
+
+test("gates project context trust and persists safe interactive preferences", async () => {
+  const registry = createRegistry();
+  const model = registry.find("deepseek", "deepseek-v4-flash");
+  assert.ok(model);
+  const session = new FakeSession(model);
+  const terminal = new FakeTerminal();
+  const snapshot = createSnapshot();
+  snapshot.projectResourcesEnabled = false;
+  const trustDecisions: Array<{ trusted: boolean; remember: boolean }> = [];
+  const savedPreferences: Array<Record<string, unknown>> = [];
+  const mode = new InteractiveMode({
+    session,
+    modelRegistry: registry,
+    cwd: process.cwd(),
+    approvalMode: "ask",
+    agentMode: "build",
+    initialShowReasoning: false,
+    settingsPath: "/tmp/deepseek-code/settings.json",
+    savePreferences: (patch) => { savedPreferences.push(patch); },
+    projectTrust: {
+      required: true,
+      resources: [{ name: "AGENTS.md", path: joinForTest("AGENTS.md"), scope: "project" }],
+      snapshot: { status: "undecided", remembered: false },
+    },
+    setProjectTrust: async (trusted, remember) => {
+      trustDecisions.push({ trusted, remember });
+      snapshot.projectResourcesEnabled = trusted;
+      return undefined;
+    },
+    checkpoints: new TurnCheckpointManager(process.cwd()),
+    sessionControls: createSessionControls(),
+    terminal,
+    clearContext: () => undefined,
+    getContextSnapshot: () => snapshot,
+    setProjectResourcesEnabled: async (enabled) => { snapshot.projectResourcesEnabled = enabled; },
+    setAgentMode: (agentMode) => {
+      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep"] : ["read", "ls", "grep", "write", "edit", "bash"];
+    },
+    getGitStatus: async () => ({ available: true, status: "" }),
+  });
+  const running = mode.run();
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /PROJECT CONTEXT TRUST.*AGENTS\.md.*y=enable once.*Tool approval remains independent/s);
+
+  terminal.type("task before trust");
+  await flush();
+  assert.deepEqual(session.prompts, []);
+  assert.match(plainTerminalOutput(terminal), /choose y, a, n, or d/);
+
+  terminal.type("y");
+  await flush();
+  assert.deepEqual(trustDecisions, [{ trusted: true, remember: false }]);
+  assert.equal(snapshot.projectResourcesEnabled, true);
+  assert.match(plainTerminalOutput(terminal), /project context enabled for this session/);
+  assert.match(plainTerminalOutput(terminal), /idle \| deepseek\/deepseek-v4-flash/);
+
+  terminal.type("/trust deny");
+  await flush();
+  assert.deepEqual(trustDecisions.at(-1), { trusted: false, remember: true });
+  terminal.type("/resources on");
+  await flush();
+  assert.equal(snapshot.projectResourcesEnabled, false);
+  assert.match(plainTerminalOutput(terminal), /project resources are untrusted.*\/trust once/s);
+
+  terminal.type("/trust once");
+  await flush();
+  terminal.type("/settings approval deny");
+  terminal.type("/mode plan");
+  terminal.type("/thinking off");
+  terminal.type("/reasoning");
+  terminal.type("/model deepseek-v4-pro");
+  await flush();
+  assert.ok(savedPreferences.some((patch) => patch.approval === "deny"));
+  assert.ok(savedPreferences.some((patch) => patch.mode === "plan"));
+  assert.ok(savedPreferences.some((patch) => patch.thinking === "off"));
+  assert.ok(savedPreferences.some((patch) => patch.showReasoning === true));
+  assert.ok(savedPreferences.some((patch) => patch.model === "deepseek-v4-pro"));
+  assert.match(plainTerminalOutput(terminal), /default approval saved as deny; current session remains ask/);
 
   terminal.type("/exit");
   await running;

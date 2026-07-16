@@ -104,3 +104,51 @@ test("preserves Pi AGENTS order and can temporarily filter project resources", a
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("discovers untrusted project context without placing it in the initial system prompt", async () => {
+  const root = await mkdtemp(join(tmpdir(), "deepseek-context-trust-"));
+  const agentDir = join(root, "agent-home");
+  const cwd = join(root, "project");
+  try {
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(cwd, "AGENTS.md"), "untrusted project instruction\n");
+    const filter = createProjectResourceFilter(cwd, agentDir, false);
+    const settingsManager = SettingsManager.inMemory({}, { projectTrusted: false });
+    const loader = new DefaultResourceLoader({
+      cwd,
+      agentDir,
+      settingsManager,
+      noExtensions: true,
+      skillsOverride: filter.skillsOverride,
+      promptsOverride: filter.promptsOverride,
+      agentsFilesOverride: filter.agentsFilesOverride,
+    });
+    await loader.reload();
+    assert.equal(loader.getAgentsFiles().agentsFiles.length, 0);
+    assert.deepEqual(filter.getDiscoveredProjectResources().map((item) => item.path), [join(cwd, "AGENTS.md")]);
+
+    const authStorage = AuthStorage.inMemory({ deepseek: { type: "api_key", key: "test-api-key" } });
+    const modelRegistry = ModelRegistry.inMemory(authStorage);
+    const model = modelRegistry.find("deepseek", "deepseek-v4-flash");
+    assert.ok(model);
+    const { session } = await createAgentSession({
+      cwd,
+      authStorage,
+      modelRegistry,
+      model,
+      tools: ["read"],
+      resourceLoader: loader,
+      settingsManager,
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+    assert.doesNotMatch(session.systemPrompt, /untrusted project instruction/);
+
+    settingsManager.setProjectTrusted(true);
+    filter.setEnabled(true);
+    await session.reload();
+    assert.match(session.systemPrompt, /untrusted project instruction/);
+    session.dispose();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

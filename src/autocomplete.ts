@@ -24,6 +24,8 @@ interface AutocompleteOptions {
 const builtinCommands: SlashCommand[] = [
   { name: "help", description: "Show commands and shortcuts" },
   { name: "status", description: "Show the current runtime state" },
+  { name: "settings", argumentHint: "[approval value]", description: "Show or update local defaults" },
+  { name: "trust", argumentHint: "[once|always|off|deny]", description: "Review project context trust" },
   { name: "cache", description: "Inspect DeepSeek cache usage for the latest turn" },
   { name: "diff", description: "Review write/edit changes from the latest mutating turn" },
   { name: "verify", argumentHint: "[confirm]", description: "Preview or start explicit validation" },

@@ -1,12 +1,19 @@
 import type { AgentSessionEvent, CreateAgentSessionOptions } from "@earendil-works/pi-coding-agent";
 import type { SessionSelection } from "./sessions.ts";
+import {
+  DEFAULT_PRODUCT_MODEL,
+  DEFAULT_PRODUCT_PREFERENCES,
+  PRODUCT_THINKING_LEVELS,
+  type ProductPreferences,
+  type ProductThinkingLevel,
+} from "./product-settings.ts";
 import { AGENT_MODES, APPROVAL_MODES, type AgentMode, type ApprovalMode } from "./tool-policy.ts";
 import { describeDeepSeekError } from "./deepseek-errors.ts";
 
-export const DEFAULT_MODEL_ID = "deepseek-v4-flash";
+export const DEFAULT_MODEL_ID = DEFAULT_PRODUCT_MODEL;
 export const DEEPSEEK_PROVIDER = "deepseek";
-export const THINKING_LEVELS = ["off", "high", "max"] as const;
-export type DeepSeekThinkingLevel = (typeof THINKING_LEVELS)[number];
+export const THINKING_LEVELS = PRODUCT_THINKING_LEVELS;
+export type DeepSeekThinkingLevel = ProductThinkingLevel;
 
 export interface CliOptions {
   help: boolean;
@@ -42,15 +49,18 @@ function readOptionValue(args: string[], index: number, option: string): { value
   return { value, nextIndex: index + 1 };
 }
 
-export function parseCliArgs(args: string[]): CliOptions {
+export function parseCliArgs(
+  args: string[],
+  defaults: ProductPreferences = DEFAULT_PRODUCT_PREFERENCES,
+): CliOptions {
   let help = false;
   let doctor = false;
-  let model = DEFAULT_MODEL_ID;
+  let model = defaults.model;
   let modelExplicit = false;
-  let thinkingLevel: DeepSeekThinkingLevel = "high";
+  let thinkingLevel: DeepSeekThinkingLevel = defaults.thinking;
   let thinkingExplicit = false;
-  let approvalMode: ApprovalMode = "ask";
-  let agentMode: AgentMode = "build";
+  let approvalMode: ApprovalMode = defaults.approval;
+  let agentMode: AgentMode = defaults.mode;
   let session: SessionSelection = { type: "new" };
   let metrics = false;
   const taskParts: string[] = [];

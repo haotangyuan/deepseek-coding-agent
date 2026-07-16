@@ -116,14 +116,15 @@ flowchart TB
 | 修改与命令 | write/edit/bash 默认询问；审批 diff；本轮聚合 `/diff`；冲突安全 `/undo confirm`；Bash 精确授权 | `src/tool-policy.ts`；`src/checkpoints.ts` `TurnCheckpointManager`；`test/checkpoints.test.ts` | write/edit 可逆；Bash 副作用不覆盖 |
 | Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
 | 交互 TUI | 多轮、Markdown、折叠 thinking、可展开工具卡、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`、`ToolActivityCard`；`src/autocomplete.ts`；`test/interactive.test.ts` | 日用可用；缺结果搜索 |
-| 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；可临时过滤项目资源并 reload | `src/context-resources.ts:61`、`:92`；`test/context-resources.test.ts` | 稳定；缺启动信任选择 |
+| 上下文资源 | 展示 AGENTS、Skills、Prompts、System Prompt 大小；未知项目先过滤，TUI 可临时/永久信任并 reload | `src/context-resources.ts`；`src/project-trust.ts`；`test/context-resources.test.ts` | 稳定；Extension 仍禁用 |
+| 本地设置 | 私有 JSON 保存模型、thinking、mode、approval、reasoning 展示；CLI 显式值优先，损坏时安全回退且不覆盖 | `src/product-settings.ts`；`test/product-settings.test.ts` | 日用核心偏好可用 |
 | 持久会话 | create/continue/resume/list/name/tree/fork/clone/compact；Pi 选择器支持会话热切换和树导航，仍限制当前 cwd | `src/sessions.ts` `createSessionControls()`；`src/interactive.ts` `showSessions()`、`handleTree()`；对应 Session/TUI 测试 | 机制与主要交互完整 |
 | Completion Evidence 与验证 | 记录修改、diff、验证和错误；`/verify` 只预览候选，`/verify confirm` 才新增一次 Agent 回合 | `src/completion-evidence.ts`；`src/validation-suggestions.ts`；`src/interactive.ts` `handleVerify()` | 显式闭环可用；不自动 Gate |
 | Cache Inspector | 本轮和 Session hit/miss/rate，足量样本下降告警 | `src/cache-inspector.ts:42`；`test/cache-inspector.test.ts` | 观测可用 |
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 7 个协议/repair 任务、隐藏测试反馈、成本边界、按任务聚合 | `src/eval.ts:101`、`:587`；`src/eval-report.ts:70`；`test/evaluation.test.ts` | 基线可用；任务仍偏小 |
 
-当前自动化共 78 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 85 项，覆盖纯函数、替身 Session、临时目录工具、80×24 TUI、流式/截断/失败工具卡、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、显式验证预览与确认、本地设置、项目信任、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -138,10 +139,9 @@ flowchart TB
 
 ### 5.2 仍然会造成日常摩擦
 
-1. **本地偏好不可配置**：模型、thinking、mode、approval、项目资源等每次依赖 CLI 参数或当前进程状态。
-2. **项目资源没有完整的启动信任体验**：第三方 Extension 已禁用，但项目 AGENTS/Skills/Prompts 仍应在首次进入陌生仓库时更明确地展示来源。
-3. **工具结果缺少搜索**：卡片可展开 tail 并能定位 Pi 完整输出文件，但还不能在 TUI 内搜索长日志。
-4. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
+1. **项目验证命令不能配置**：`/verify` 只从固定 manifest 推导候选，尚无受信任的项目级覆盖。
+2. **工具结果缺少搜索**：卡片可展开 tail 并能定位 Pi 完整输出文件，但还不能在 TUI 内搜索长日志。
+3. **真实任务评测仍小**：当前 fixture 能验证机制，不能充分代表跨模块重构、长日志和复杂测试修复。
 
 ## 6. 外部产品带来的设计启发
 
@@ -302,7 +302,7 @@ flowchart TB
 - `/verify` 零请求，未预览确认失败，预览后确认恰好一个请求；自动化不调用真实 API。
 - 5000 字符工具失败结果在 TUI 截断；Pi 源码确认长 Bash 输出保存临时文件。
 
-### P1-A：本地设置与项目信任
+### P1-A：本地设置与项目信任（核心范围已完成，2026-07-16）
 
 目标：减少重复配置，同时让陌生项目上下文来源可控。
 
@@ -313,6 +313,17 @@ flowchart TB
 - 首次进入包含项目 AGENTS/Skills/Prompts 的陌生目录时，展示来源并允许本次启用、记住启用或禁用。
 - 复用 Pi `ProjectTrustStore`/trust 组件；项目资源信任继续不等于工具批准。
 - 设置文件损坏时显示错误并回退安全默认值，不静默覆盖。
+
+实际交付：
+
+- 新增产品私有 `settings.json`，只允许 model/thinking/mode/approval/showReasoning；不接受 API Key 字段，目录/文件权限为 `0700/0600`。
+- CLI 使用保存值作为默认，显式参数优先；TUI 的模型、thinking、mode、reasoning 变化自动保存，approval 通过 `/settings` 保存到下一次启动。
+- 复用 Pi `ProjectTrustStore` 保存规范化路径决定；未知/损坏状态 fail-closed，交互 TUI 提供本次/永久启用或禁用。
+- 未信任时同时关闭 Pi 项目 settings 和项目/祖先 AGENTS、项目 Skills/Prompts；一次性 CLI 不弹询问而保持关闭。
+- `/resources on` 不能绕过信任；第三方 Extension 继续禁用；工具审批独立不变。
+- 详细边界见 `docs/local-settings-and-project-trust.md`。
+
+保留项：项目级产品偏好和建议验证命令尚未实现，待真实项目出现稳定覆盖需求后独立设计。
 
 ### P1-B：Bash 与工具结果体验（已完成，2026-07-16）
 
@@ -425,6 +436,12 @@ flowchart TB
 成功标准：流式事件不丢失命令；成功、非零退出、超时、取消和截断可辨识；长结果可按 ID 展开；不复制 Pi 执行逻辑。
 
 完成证据：`ToolActivityCard` 与 `/tool [id-prefix]` 已接入 Pi 三段工具事件，80×24 测试覆盖核心状态；78/78 自动化通过。
+
+### Iteration 6：本地设置与项目信任（已完成）
+
+成功标准：常用偏好跨进程恢复且 CLI 可覆盖；陌生项目资源在用户决定前不进入模型；损坏设置/信任文件 fail-closed；信任不改变工具审批。
+
+完成证据：用户设置白名单与私有权限、Pi trust store、SettingsManager 项目开关、ResourceLoader 过滤/reload、80×24 信任卡及一次性 CLI 警告均有自动化覆盖。
 
 ## 12. 每次迭代的完成门槛
 

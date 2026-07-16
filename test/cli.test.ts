@@ -49,6 +49,36 @@ test("accepts an explicit DeepSeek model and rejects other providers", () => {
   assert.throws(() => parseCliArgs(["--model", "openai/gpt-5", "task"]), /Only the deepseek provider/);
 });
 
+test("uses saved local defaults while explicit CLI options still win", () => {
+  const defaults = {
+    model: "deepseek-v4-pro",
+    thinking: "max" as const,
+    mode: "plan" as const,
+    approval: "auto-read" as const,
+    showReasoning: true,
+  };
+  const saved = parseCliArgs(["task"], defaults);
+  assert.equal(saved.modelId, "deepseek-v4-pro");
+  assert.equal(saved.thinkingLevel, "max");
+  assert.equal(saved.agentMode, "plan");
+  assert.equal(saved.approvalMode, "auto-read");
+  assert.equal(saved.modelExplicit, false);
+
+  const explicit = parseCliArgs([
+    "--model", "deepseek-v4-flash",
+    "--thinking", "off",
+    "--mode", "build",
+    "--approval", "deny",
+    "task",
+  ], defaults);
+  assert.equal(explicit.modelId, "deepseek-v4-flash");
+  assert.equal(explicit.thinkingLevel, "off");
+  assert.equal(explicit.agentMode, "build");
+  assert.equal(explicit.approvalMode, "deny");
+  assert.equal(explicit.modelExplicit, true);
+  assert.equal(explicit.thinkingExplicit, true);
+});
+
 test("rejects unknown options and missing model values", () => {
   assert.throws(() => parseCliArgs(["--unknown"]), /Unknown option/);
   assert.throws(() => parseCliArgs(["--model"]), /requires a value/);
@@ -178,6 +208,11 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
       selectedThinking = options.thinkingLevel;
       selectedAgentMode = options.toolPolicy.agentMode;
       return {
+        projectTrust: {
+          required: true,
+          resources: [{ name: "AGENTS.md", path: "/workspace/AGENTS.md", scope: "project" }],
+          snapshot: { status: "undecided", remembered: false },
+        },
         session: {
           subscribe: (nextListener) => {
             listener = nextListener;
@@ -240,6 +275,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);
+  assert.match(stderr.join(""), /context:untrusted.*project resources disabled/s);
   assert.match(stderr.join(""), /\[evidence\].*files=README\.md.*bash=0 · tool-errors=0/s);
   assert.match(stderr.join(""), /evidence:attention.*no recognized validation/s);
   assert.match(stderr.join(""), /\[cache\].*turn hit=30 miss=10 rate=75\.0% prompt=40/s);
@@ -324,16 +360,25 @@ test("runCli enters interactive mode only when no task and a TTY are available",
     interactiveTerminal: true,
     authStorage,
     modelRegistry,
+    preferences: {
+      model: "deepseek-v4-pro",
+      thinking: "max",
+      approval: "deny",
+      mode: "plan",
+      showReasoning: true,
+    },
     createSession: async () => {
       throw new Error("one-shot session should not be created");
     },
-    runInteractive: async ({ model, restoreSavedModel, thinkingExplicit, approvalMode, agentMode }) => {
+    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, thinkingExplicit, approvalMode, agentMode, showReasoning }) => {
       started = true;
-      assert.equal(model.id, "deepseek-v4-flash");
+      assert.equal(model.id, "deepseek-v4-pro");
       assert.equal(restoreSavedModel, true);
+      assert.equal(thinkingLevel, "max");
       assert.equal(thinkingExplicit, false);
-      assert.equal(approvalMode, "ask");
-      assert.equal(agentMode, "build");
+      assert.equal(approvalMode, "deny");
+      assert.equal(agentMode, "plan");
+      assert.equal(showReasoning, true);
     },
     runDoctor: async () => doctorReport(),
     getGitStatus: async () => ({ available: false, status: "" }),

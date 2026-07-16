@@ -38,6 +38,12 @@ import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./comp
 import { EvaluationMetricsCollector } from "./evaluation.ts";
 import { collectDoctorReport, type DoctorReport, renderDoctorReport } from "./doctor.ts";
 import { InteractiveMode } from "./interactive.ts";
+import { ProductProjectTrust } from "./project-trust.ts";
+import {
+  DEFAULT_PRODUCT_PREFERENCES,
+  type ProductPreferences,
+  ProductSettingsStore,
+} from "./product-settings.ts";
 import {
   createPersistentSessionManager,
   createSessionControls,
@@ -77,7 +83,12 @@ interface SessionFactoryOptions {
   toolPolicy: ToolPolicy;
   tools: string[];
   sessionSelection: SessionSelection;
-  resourceFilter?: ProjectResourceFilter;
+}
+
+interface ProjectTrustSessionInfo {
+  required: boolean;
+  resources: ReturnType<ProjectResourceFilter["getDiscoveredProjectResources"]>;
+  snapshot: ReturnType<ProductProjectTrust["snapshot"]>;
 }
 
 export function resolveSessionModel(
@@ -100,7 +111,11 @@ export interface CliDependencies {
   interactiveTerminal: boolean;
   authStorage: AuthStorage;
   modelRegistry: ModelRegistry;
-  createSession(options: SessionFactoryOptions): Promise<{ session: SessionView }>;
+  preferences?: ProductPreferences;
+  preferencesWarning?: string;
+  settingsPath?: string;
+  savePreferences?(patch: Partial<ProductPreferences>): void;
+  createSession(options: SessionFactoryOptions): Promise<{ session: SessionView; projectTrust?: ProjectTrustSessionInfo }>;
   runInteractive(options: {
     model: SelectedModel;
     restoreSavedModel: boolean;
@@ -108,6 +123,7 @@ export interface CliDependencies {
     thinkingExplicit: boolean;
     approvalMode: ApprovalMode;
     agentMode: AgentMode;
+    showReasoning: boolean;
     sessionSelection: SessionSelection;
   }): Promise<void>;
   runDoctor(modelId: string): Promise<DoctorReport>;
@@ -130,6 +146,8 @@ function productionDependencies(): CliDependencies {
   const sessionDir = getDeepSeekSessionDir(agentDir);
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
+  const productSettings = new ProductSettingsStore(agentDir);
+  const preferences = productSettings.getPreferences();
   const getGitStatus = async (targetCwd: string): Promise<{ available: boolean; status: string }> => {
     try {
       const { stdout } = await promisify(execFile)("git", ["-C", targetCwd, "status", "--short"], {
@@ -141,7 +159,9 @@ function productionDependencies(): CliDependencies {
     }
   };
   const createProductionSession = async (options: SessionFactoryOptions) => {
-    const settingsManager = SettingsManager.create(cwd, agentDir);
+    const projectTrust = new ProductProjectTrust(cwd, agentDir);
+    const initiallyTrusted = projectTrust.isTrusted();
+    const settingsManager = SettingsManager.create(cwd, agentDir, { projectTrusted: initiallyTrusted });
     const sessionManager = await createPersistentSessionManager({
       cwd,
       sessionDir,
@@ -155,7 +175,7 @@ function productionDependencies(): CliDependencies {
     );
     await checkpoints.load();
     const model = resolveSessionModel(options.modelRegistry, options.model, sessionManager, options.restoreSavedModel);
-    const resourceFilter = options.resourceFilter ?? createProjectResourceFilter(cwd, agentDir);
+    const resourceFilter = createProjectResourceFilter(cwd, agentDir, initiallyTrusted);
     const resourceLoader = new DefaultResourceLoader({
       cwd,
       agentDir,
@@ -167,6 +187,13 @@ function productionDependencies(): CliDependencies {
       agentsFilesOverride: resourceFilter.agentsFilesOverride,
     });
     await resourceLoader.reload();
+    const projectTrustRequired = projectTrust.hasPiTrustResources()
+      || resourceFilter.getDiscoveredProjectResources().length > 0;
+    if (!projectTrustRequired && !resourceFilter.isEnabled()) {
+      settingsManager.setProjectTrusted(true);
+      resourceFilter.setEnabled(true);
+      await resourceLoader.reload();
+    }
     const created = await createAgentSession({
       cwd,
       authStorage: options.authStorage,
@@ -178,13 +205,31 @@ function productionDependencies(): CliDependencies {
       settingsManager,
       sessionManager,
     });
-    return { ...created, resourceLoader, resourceFilter, agentDir, checkpoints };
+    return {
+      ...created,
+      resourceLoader,
+      resourceFilter,
+      agentDir,
+      checkpoints,
+      settingsManager,
+      projectTrustController: projectTrust,
+      projectTrustRequired,
+      projectTrust: {
+        required: projectTrustRequired,
+        resources: resourceFilter.getDiscoveredProjectResources(),
+        snapshot: projectTrust.snapshot(),
+      },
+    };
   };
   return {
     cwd,
     interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
     authStorage,
     modelRegistry,
+    preferences,
+    preferencesWarning: productSettings.getLoadError()?.message,
+    settingsPath: productSettings.path,
+    savePreferences: (patch) => productSettings.update(patch),
     runDoctor: (modelId) => collectDoctorReport({
       cwd,
       agentDir,
@@ -194,7 +239,7 @@ function productionDependencies(): CliDependencies {
       interactiveTerminal: process.stdin.isTTY === true && process.stdout.isTTY === true,
     }),
     createSession: createProductionSession,
-    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, thinkingExplicit, approvalMode, agentMode, sessionSelection }) => {
+    runInteractive: async ({ model, restoreSavedModel, thinkingLevel, thinkingExplicit, approvalMode, agentMode, showReasoning, sessionSelection }) => {
       let activeSelection = sessionSelection;
       let activeThinkingLevel = thinkingLevel;
       while (true) {
@@ -205,7 +250,6 @@ function productionDependencies(): CliDependencies {
           agentMode,
           approve: (request) => approvalHandler?.(request) ?? Promise.resolve("deny"),
         });
-        const resourceFilter = createProjectResourceFilter(cwd, agentDir);
         const created = await createProductionSession({
           authStorage,
           modelRegistry,
@@ -215,7 +259,6 @@ function productionDependencies(): CliDependencies {
           toolPolicy,
           tools: activeToolsForAgentMode(approvalMode, agentMode),
           sessionSelection: activeSelection,
-          resourceFilter,
         });
         const mode = new InteractiveMode({
           session: created.session,
@@ -223,6 +266,33 @@ function productionDependencies(): CliDependencies {
           cwd,
           approvalMode,
           agentMode,
+          initialShowReasoning: showReasoning,
+          settingsPath: productSettings.path,
+          settingsWarning: productSettings.getLoadError()?.message,
+          savePreferences: (patch) => productSettings.update(patch),
+          projectTrust: created.projectTrust,
+          setProjectTrust: async (trusted, remember) => {
+            const previousTrusted = created.projectTrustController.isTrusted();
+            created.projectTrustController.decide(trusted, false);
+            created.settingsManager.setProjectTrusted(trusted);
+            created.resourceFilter.setEnabled(trusted);
+            try {
+              await created.session.reload();
+            } catch (error) {
+              created.projectTrustController.decide(previousTrusted, false);
+              created.settingsManager.setProjectTrusted(previousTrusted);
+              created.resourceFilter.setEnabled(previousTrusted);
+              await created.session.reload();
+              throw error;
+            }
+            if (!remember) return undefined;
+            try {
+              created.projectTrustController.decide(trusted, true);
+              return undefined;
+            } catch (error) {
+              return sanitizeError(error);
+            }
+          },
           checkpoints: created.checkpoints,
           sessionControls: createSessionControls(created.session, cwd),
           clearContext: () => {
@@ -233,16 +303,16 @@ function productionDependencies(): CliDependencies {
             loader: created.resourceLoader,
             cwd,
             agentDir: created.agentDir,
-            projectResourcesEnabled: resourceFilter.isEnabled(),
+            projectResourcesEnabled: created.resourceFilter.isEnabled(),
             effectiveSystemPrompt: created.session.systemPrompt,
             activeTools: created.session.getActiveToolNames(),
           }),
           setProjectResourcesEnabled: async (enabled) => {
-            resourceFilter.setEnabled(enabled);
+            created.resourceFilter.setEnabled(enabled);
             try {
               await created.session.reload();
             } catch (error) {
-              resourceFilter.setEnabled(!enabled);
+              created.resourceFilter.setEnabled(!enabled);
               await created.session.reload();
               throw error;
             }
@@ -299,7 +369,7 @@ export async function runCli(
 ): Promise<number> {
   let parsed;
   try {
-    parsed = parseCliArgs(args);
+    parsed = parseCliArgs(args, dependencies.preferences ?? DEFAULT_PRODUCT_PREFERENCES);
   } catch (error) {
     io.stderr(`Error: ${sanitizeError(error)}\n${usage()}\n`);
     return 1;
@@ -308,6 +378,9 @@ export async function runCli(
   if (parsed.help) {
     io.stdout(`${usage()}\n`);
     return 0;
+  }
+  if (dependencies.preferencesWarning) {
+    io.stderr(`[settings:warning] ${sanitizeError(dependencies.preferencesWarning)}; using safe defaults\n`);
   }
   if (parsed.doctor) {
     try {
@@ -344,6 +417,7 @@ export async function runCli(
         thinkingExplicit: parsed.thinkingExplicit,
         approvalMode: parsed.approvalMode,
         agentMode: parsed.agentMode,
+        showReasoning: dependencies.preferences?.showReasoning ?? false,
         sessionSelection: parsed.session,
       });
       return 0;
@@ -403,6 +477,9 @@ export async function runCli(
       sessionSelection: parsed.session,
     });
     session = created.session;
+    if (created.projectTrust?.required && created.projectTrust.snapshot.status !== "trusted") {
+      io.stderr(`[context:untrusted] project resources disabled; start interactive mode to review trust\n`);
+    }
     if (runOptions.signal?.aborted) throw runOptions.signal.reason;
     if (runOptions.signal) {
       abortListener = () => {

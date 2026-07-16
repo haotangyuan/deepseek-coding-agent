@@ -31,6 +31,7 @@ export interface ContextSnapshot {
 export interface ProjectResourceFilter {
   isEnabled(): boolean;
   setEnabled(enabled: boolean): void;
+  getDiscoveredProjectResources(): ContextResourceItem[];
   skillsOverride(base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }): {
     skills: Skill[];
     diagnostics: ResourceDiagnostic[];
@@ -58,28 +59,72 @@ function filterDiagnostics(
   return diagnostics.filter((diagnostic) => !diagnostic.path || !isInside(cwd, diagnostic.path));
 }
 
-export function createProjectResourceFilter(cwd: string, agentDir: string): ProjectResourceFilter {
-  let projectResourcesEnabled = true;
+export function createProjectResourceFilter(
+  cwd: string,
+  agentDir: string,
+  initiallyEnabled = true,
+): ProjectResourceFilter {
+  let projectResourcesEnabled = initiallyEnabled;
+  const discovered = new Map<string, ContextResourceItem>();
   return {
     isEnabled: () => projectResourcesEnabled,
     setEnabled: (enabled) => {
       projectResourcesEnabled = enabled;
     },
-    skillsOverride: (base) => ({
-      skills: projectResourcesEnabled ? base.skills : base.skills.filter((skill) => skill.sourceInfo.scope !== "project"),
-      diagnostics: filterDiagnostics(base.diagnostics, cwd, projectResourcesEnabled),
-    }),
-    promptsOverride: (base) => ({
-      prompts: projectResourcesEnabled
-        ? base.prompts
-        : base.prompts.filter((prompt) => prompt.sourceInfo.scope !== "project"),
-      diagnostics: filterDiagnostics(base.diagnostics, cwd, projectResourcesEnabled),
-    }),
-    agentsFilesOverride: (base) => ({
-      agentsFiles: projectResourcesEnabled
-        ? base.agentsFiles
-        : base.agentsFiles.filter((agentsFile) => isInside(agentDir, agentsFile.path)),
-    }),
+    getDiscoveredProjectResources: () => [...discovered.values()],
+    skillsOverride: (base) => {
+      for (const skill of base.skills) {
+        if (skill.sourceInfo.scope === "project") {
+          discovered.set(`skill:${skill.filePath}`, {
+            name: skill.name,
+            path: skill.filePath,
+            scope: "project",
+            description: skill.description,
+            modelInvocable: !skill.disableModelInvocation,
+          });
+        }
+      }
+      return {
+        skills: projectResourcesEnabled ? base.skills : base.skills.filter((skill) => skill.sourceInfo.scope !== "project"),
+        diagnostics: filterDiagnostics(base.diagnostics, cwd, projectResourcesEnabled),
+      };
+    },
+    promptsOverride: (base) => {
+      for (const prompt of base.prompts) {
+        if (prompt.sourceInfo.scope === "project") {
+          discovered.set(`prompt:${prompt.filePath}`, {
+            name: prompt.name,
+            path: prompt.filePath,
+            scope: "project",
+            description: prompt.description,
+            characters: prompt.content.length,
+          });
+        }
+      }
+      return {
+        prompts: projectResourcesEnabled
+          ? base.prompts
+          : base.prompts.filter((prompt) => prompt.sourceInfo.scope !== "project"),
+        diagnostics: filterDiagnostics(base.diagnostics, cwd, projectResourcesEnabled),
+      };
+    },
+    agentsFilesOverride: (base) => {
+      for (const agentsFile of base.agentsFiles) {
+        if (!isInside(agentDir, agentsFile.path)) {
+          discovered.set(`agents:${agentsFile.path}`, {
+            name: agentsFile.path.split(/[\\/]/).pop() ?? agentsFile.path,
+            path: agentsFile.path,
+            scope: classifyPath(agentsFile.path, cwd, agentDir),
+            characters: agentsFile.content.length,
+          });
+        }
+      }
+      return {
+        agentsFiles: projectResourcesEnabled
+          ? base.agentsFiles
+          : base.agentsFiles.filter((agentsFile) => isInside(agentDir, agentsFile.path)),
+      };
+    },
   };
 }
 

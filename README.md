@@ -27,6 +27,8 @@
 - Cache Inspector 展示本轮和 Session 累计 cache hit/miss/rate；`/cache` 可随时重看，只有相邻足量轮次下降至少 20pp 才提示事实型告警。
 - 无任务参数时进入 DeepSeek 深海蓝风格的交互式 TUI，支持多行输入、多轮对话、折叠 reasoning、工具卡片、状态栏、steering 和取消；Provider/工具失败、自动重试和取消使用 80 列友好的紧凑恢复卡片。
 - 展示真实加载的 AGENTS.md、Skills、Prompt Templates、工具和有效 System Prompt 大小；可临时关闭项目上下文并让 Pi 重载 Session。
+- 首次进入包含项目 AGENTS/Skills/Prompts 或 `.pi` 配置的陌生目录时先禁用项目上下文，并在 TUI 中展示来源后选择本次/永久启用或禁用；一次性命令保持 fail-closed。
+- 用户偏好保存在私有的 `~/.pi/agent/deepseek-code/settings.json`；模型、thinking、mode、approval 和 reasoning 展示可跨进程恢复，显式 CLI 参数始终优先。
 - 默认使用 Pi `SessionManager` 持久化 JSONL，支持 workspace 内 continue/resume、标题、列表、树导航、fork/clone 和自动/手动 Compaction。
 - 一次性任务支持显式 `off/high/max` thinking、内存 Session 和结构化指标；固定评测默认 dry-run，只有 `--live` 才调用真实 API。
 - Provider 错误按 DeepSeek 官方 400/401/402/422/429/500/503 语义显示分类、是否可重试和下一步动作；原始详情先遮蔽敏感值。
@@ -95,6 +97,8 @@ npm start
 /model [deepseek-model-id]
 /thinking [level]
 /reasoning
+/settings [approval ask|auto-read|deny]
+/trust [once|always|off|deny]
 /context
 /agents
 /skills
@@ -115,7 +119,9 @@ Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steerin
 
 `/cache` 直接读取 Pi 已归一化的 DeepSeek usage：本轮通过提交前后 SessionStats 做差，Session 数值包含 JSONL 全历史的实际计费 usage。它不会为了诊断缓存再发送请求，也不会猜测命中下降原因。
 
-`/context` 展示当前有效 System Prompt 的字符数和粗略 token、活动工具及资源数量；`/agents`、`/skills`、`/prompts` 展示真实来源路径和作用域。`/resources off` 只在当前进程内移除项目/祖先 AGENTS 和项目级 Skills/Prompts，再调用 Pi `AgentSession.reload()`；用户级资源继续保留。上下文开关不改变工具审批模式，两者是独立边界。
+`/context` 展示当前有效 System Prompt 的字符数和粗略 token、活动工具、资源数量与项目信任状态；`/agents`、`/skills`、`/prompts` 展示真实来源路径和作用域。未知项目默认不加载项目/祖先 AGENTS、项目 Skills/Prompts 和项目 `.pi` 设置，TUI 会先列出来源并要求输入 `y/a/n/d`。`/trust once|always|off|deny` 可重新选择，`/resources on` 不能绕过未信任状态。用户级资源始终保留，第三方 Extension 仍禁用，项目信任也不会改变工具审批模式。
+
+`/settings` 查看当前生效偏好和本地文件位置；`/model`、`/thinking`、`/mode`、`/reasoning` 会保存下一次启动的默认值，`/settings approval <mode>` 保存下次启动的审批模式。设置只接受固定的非敏感字段，不能保存 API Key；损坏文件会回退到 `deepseek-v4-flash + high + build + ask`，并保持只读直到用户手动修复。完整边界见 [docs/local-settings-and-project-trust.md](docs/local-settings-and-project-trust.md)。
 
 `/mode plan` 只允许空闲时切换，并通过 Pi `AgentSession.setActiveToolsByName()` 将下一轮工具缩减为 read/ls/grep；`/mode build` 恢复当前审批模式允许的工具。模式只影响当前进程，不写入 Session JSONL；恢复会话时使用 CLI 默认值或显式 `--mode`。
 
@@ -224,9 +230,9 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - 自动 Undo 只覆盖 Pi write/edit；Bash、包安装、数据库和外部系统副作用需要用户自行恢复。Checkpoint 保存在本地私有目录，不是加密存储。
 - `/fork` 和 `/clone` 创建新文件但不会在当前进程偷偷切换；按提示重新使用 `--resume` 进入新会话。
 - Compaction summary 由当前 DeepSeek 模型生成，会产生一次模型请求；过短或刚压缩过的会话会由 Pi 拒绝重复压缩。
-- `/context` 的 token 数按 4 字符约 1 token 粗估，不是 Provider tokenizer 的精确计数；资源开关重启进程后恢复开启。
+- `/context` 的 token 数按 4 字符约 1 token 粗估，不是 Provider tokenizer 的精确计数；临时信任/禁用只在当前进程生效，永久选择按规范化项目路径保存。
 - 工具审批是产品层防误操作机制，不提供 OS 级沙箱；项目发现的第三方 Extension 当前默认禁用。
-- Plan Mode 是真实只读工具边界，但不强制模型输出固定格式的计划；当前模式不持久化，运行中或审批等待时不能切换。
+- Plan Mode 是真实只读工具边界，但不强制模型输出固定格式的计划；模式会作为下次启动偏好保存，运行中或审批等待时不能切换。
 - 不支持 MCP、多 Agent、IDE 插件或云端服务。
 
 ## 仓库边界

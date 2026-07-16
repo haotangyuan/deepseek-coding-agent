@@ -1,7 +1,7 @@
 # DeepSeek Coding Agent 产品与技术路线图
 
 > 文档性质：持续维护的产品、架构与开发决策基线
-> 最近更新：2026-07-16（显式验证闭环）
+> 最近更新：2026-07-16（本地设置与项目上下文信任）
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
 > M3 实现基线提交：`4d57b48`
@@ -138,7 +138,8 @@ M1–M5 完成后，近期日用优化顺序调整为：
 
 ```text
 Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
-              → 显式验证闭环 → DeepSeek 量化优化
+              → 显式验证闭环 → 本地设置/项目信任
+              → DeepSeek 量化优化
 ```
 
 详细能力盘点、体验判断和每阶段验收见 `docs/product-status-and-evolution.md`。
@@ -464,6 +465,7 @@ npm test
 | Done | Pi Session/Tree 选择器 | 已完成搜索、过滤、取消、树导航和当前工作区会话热切换 |
 | Done | 本轮 Diff 与 Undo | 已完成本轮聚合补丁、冲突保护、Resume 和显式文件恢复 |
 | Done | 显式验证闭环 | 已完成只读候选发现、双阶段确认和验证 Evidence 回收 |
+| Done | 本地设置与项目信任 | 已完成私有偏好、CLI 覆盖、Pi trust store、fail-closed 资源加载和 TUI 决策卡 |
 | P1 | DeepSeek 量化优化 | 用固定任务提升完成率、缓存和成本表现 |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
@@ -529,9 +531,12 @@ npm test
 | D-038 | Session/Tree 直接复用 Pi 选择器，Session 切换通过销毁并重建 AgentSession 完成 | 已采纳 | 选择器像 Pi 一样临时替换输入区；保留搜索、排序、过滤和树交互，避免旧 Runtime 直接替换 JSONL 造成内存状态漂移，跨工作区会话保持只读可见但拒绝切换 |
 | D-039 | 本轮 Undo 使用 write/edit pre/post-image，不直接执行 Git stash apply | 已采纳 | 保留任务开始前已有脏内容；恢复前验证磁盘仍等于 post-image，冲突时整次拒绝。Bash 副作用明确不在保证范围 |
 | D-040 | 工具卡消费 Pi 事件与 Bash details，不复刻执行器 | 已采纳 | 产品层只负责有界 tail、状态语义和展开交互；PTY、取消、裁剪与完整输出文件仍由 Pi 管理 |
+| D-041 | 用户设置只接受固定非敏感字段，损坏时安全默认且只读 | 已采纳 | 避免凭据进入产品设置，也不静默覆盖用户需要修复的原文件 |
+| D-042 | 未知项目上下文 fail-closed，信任与工具审批保持独立 | 已采纳 | AGENTS/Skills/Prompts 会改变模型行为；启用它们不应同时授予文件或 Shell 权限 |
 
 ### 更新日志
 
+- **2026-07-16：** 完成本地设置与项目上下文信任。产品私有设置保存 DeepSeek-only 模型、thinking、mode、approval 和 reasoning 展示；显式 CLI 值优先，损坏文件安全回退且不覆盖。未知项目在 AGENTS/Skills/Prompts 和项目设置进入模型前展示来源，支持本次/永久启用或禁用；一次性 CLI fail-closed，Extension 与工具审批边界不变。
 - **2026-07-16：** 完成 Bash 与工具结果卡。TUI 保留 start 参数并用 update/end 原地刷新，展示 cwd、持续时间、退出/超时/取消、Pi 截断方式与完整输出路径；`/tool [id-prefix]` 展开有界 tail。78/78 自动化通过。
 - **2026-07-16：** 完成本轮 Diff 与安全文件 Undo。Pi Extension 在 `agent_start/tool_call/agent_settled` 记录 write/edit pre/post-image；`/diff` 展示聚合 unified patch，`/undo confirm` 经全文件冲突检查后恢复已有文件或删除新文件。每个 Session 的最新 checkpoint 以 `0600` 保存在产品私有目录，支持 resume，成功恢复后删除；Bash 副作用明确不覆盖。72/72 自动化通过。
 - **2026-07-16：** 完成 Pi Session/Tree 选择器。`/sessions` 接入 Pi 搜索、排序、范围、路径和删除确认界面；同工作区选择后销毁旧 Session 并从 JSONL 重建，跨工作区选择明确拒绝；`/tree` 接入 Pi 原生搜索、过滤、折叠与节点导航，文本 `list` 模式保留。63/63 自动化通过。

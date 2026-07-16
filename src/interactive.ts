@@ -31,6 +31,8 @@ import { CacheInspector, formatCacheReport, type CacheReport } from "./cache-ins
 import { type TurnCheckpointControls } from "./checkpoints.ts";
 import { createInteractiveAutocompleteProvider } from "./autocomplete.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
+import type { ProductPreferences } from "./product-settings.ts";
+import type { ProductProjectTrustSnapshot } from "./project-trust.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import {
@@ -41,6 +43,7 @@ import {
 } from "./sessions.ts";
 import {
   AGENT_MODES,
+  APPROVAL_MODES,
   type AgentMode,
   type ApprovalDecision,
   type ApprovalMode,
@@ -81,6 +84,16 @@ export interface InteractiveModeOptions {
   cwd: string;
   approvalMode: ApprovalMode;
   agentMode: AgentMode;
+  initialShowReasoning?: boolean;
+  settingsPath?: string;
+  settingsWarning?: string;
+  savePreferences?(patch: Partial<ProductPreferences>): void;
+  projectTrust?: {
+    required: boolean;
+    resources: ContextResourceItem[];
+    snapshot: ProductProjectTrustSnapshot;
+  };
+  setProjectTrust?(trusted: boolean, remember: boolean): Promise<string | undefined>;
   checkpoints: TurnCheckpointControls;
   sessionControls: SessionControls;
   terminal?: Terminal;
@@ -93,7 +106,7 @@ export interface InteractiveModeOptions {
 
 export type InteractiveCommand =
   | { name: "help" | "status" | "cache" | "diff" | "clear" | "exit" | "reasoning" | "context" | "agents" | "skills" | "prompts" | "session" | "sessions" | "clone"; argument: string }
-  | { name: "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify" | "tool"; argument: string }
+  | { name: "model" | "thinking" | "mode" | "resources" | "trust" | "name" | "compact" | "tree" | "fork" | "undo" | "verify" | "tool" | "settings"; argument: string }
   | { name: "unknown"; argument: string };
 
 const RESET = "\x1b[0m";
@@ -189,8 +202,8 @@ export function parseInteractiveCommand(input: string): InteractiveCommand | und
       argument,
     };
   }
-  if (["model", "thinking", "mode", "resources", "name", "compact", "tree", "fork", "undo", "verify", "tool"].includes(name)) {
-    return { name: name as "model" | "thinking" | "mode" | "resources" | "name" | "compact" | "tree" | "fork" | "undo" | "verify" | "tool", argument };
+  if (["model", "thinking", "mode", "resources", "trust", "name", "compact", "tree", "fork", "undo", "verify", "tool", "settings"].includes(name)) {
+    return { name: name as "model" | "thinking" | "mode" | "resources" | "trust" | "name" | "compact" | "tree" | "fork" | "undo" | "verify" | "tool" | "settings", argument };
   }
   return { name: "unknown", argument: name };
 }
@@ -465,12 +478,16 @@ export class InteractiveMode {
   private unsubscribe: (() => void) | undefined;
   private nextSessionSelection: SessionSelection | undefined;
   private pendingVerification: ValidationSuggestion | undefined;
+  private pendingProjectTrust = false;
+  private projectTrustStatus: ProductProjectTrustSnapshot["status"];
 
   constructor(options: InteractiveModeOptions) {
     initTheme("dark");
     this.options = options;
     this.session = options.session;
     this.agentMode = options.agentMode;
+    this.showReasoning = options.initialShowReasoning ?? false;
+    this.projectTrustStatus = options.projectTrust?.snapshot.status ?? "trusted";
     this.completionEvidence = new CompletionEvidenceCollector(options.cwd);
     this.tui = new TUI(options.terminal ?? new ProcessTerminal());
     this.status = new StatusLine("");
@@ -501,9 +518,11 @@ export class InteractiveMode {
     this.addSystem(`workspace ${this.options.cwd}`);
     this.addSystem(`approval ${this.options.approvalMode}`);
     this.addSystem(`agent mode ${this.agentMode}`);
+    if (this.options.settingsWarning) this.addSystem(`settings warning: ${this.options.settingsWarning}; safe defaults are active`);
     const session = this.options.sessionControls.snapshot();
     this.addSystem(`session ${session.id} · ${session.persisted ? "persisted" : "memory"}`);
     this.addSystem("project context and tool approval are independent boundaries");
+    this.showInitialProjectTrustPrompt();
     this.tui.start();
     try {
       await new Promise<void>((resolve) => {
@@ -593,6 +612,11 @@ export class InteractiveMode {
     if (!text) return;
     this.editor.clearInput();
 
+    if (this.pendingProjectTrust) {
+      await this.handleProjectTrustInput(text);
+      return;
+    }
+
     if (this.pendingApproval) {
       const approval = this.pendingApproval;
       this.pendingApproval = undefined;
@@ -660,7 +684,7 @@ export class InteractiveMode {
   private async handleCommand(command: InteractiveCommand): Promise<void> {
     if (command.name === "help") {
       this.addSystem(
-        "/help /status /cache /diff /verify [confirm] /tool [id] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
+        "/help /status /settings [approval value] /trust [once|always|off|deny] /cache /diff /verify [confirm] /tool [id] /undo [confirm] /session /sessions [list] /name [title] /compact [instructions] /tree [entry|list] /fork <entry> /clone /context /agents /skills /prompts /resources [on|off] /mode [plan|build] /model [id] /thinking [level] /reasoning /clear /exit",
       );
     } else if (command.name === "status") {
       const stats = this.session.getSessionStats();
@@ -668,6 +692,8 @@ export class InteractiveMode {
       this.addSystem(
         `model=${this.session.model?.id ?? "none"} mode=${this.agentMode} thinking=${this.session.thinkingLevel} approval=${this.options.approvalMode} project-context=${context.projectResourcesEnabled ? "on" : "off"} session=${stats.sessionId} messages=${stats.totalMessages} tokens=${stats.tokens.total}`,
       );
+    } else if (command.name === "settings") {
+      this.handleSettingsCommand(command.argument);
     } else if (command.name === "cache") {
       this.showCacheReport(this.cacheInspector.current(this.session.getSessionStats()));
     } else if (command.name === "diff") {
@@ -705,12 +731,15 @@ export class InteractiveMode {
       this.addSystem(`Prompt templates (${snapshot.prompts.length})\n${formatResourceItems(snapshot.prompts, this.options.cwd)}`);
     } else if (command.name === "resources") {
       await this.handleResourcesCommand(command.argument);
+    } else if (command.name === "trust") {
+      await this.handleTrustCommand(command.argument);
     } else if (command.name === "mode") {
       this.handleModeCommand(command.argument);
     } else if (command.name === "reasoning") {
       this.showReasoning = !this.showReasoning;
       this.refreshReasoning();
       this.addSystem(`reasoning display ${this.showReasoning ? "expanded" : "collapsed"}`);
+      this.persistPreference({ showReasoning: this.showReasoning });
     } else if (command.name === "clear") {
       if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
         this.addError("cancel the active run before clearing context");
@@ -945,6 +974,100 @@ export class InteractiveMode {
     }
   }
 
+  private showInitialProjectTrustPrompt(): void {
+    const trust = this.options.projectTrust;
+    if (!trust?.required) return;
+    if (this.projectTrustStatus === "trusted") {
+      this.addSystem(`project context trusted${trust.snapshot.remembered ? ` via ${trust.snapshot.savedPath}` : " for this session"}`);
+      return;
+    }
+    if (this.projectTrustStatus === "untrusted" && trust.snapshot.remembered) {
+      this.addSystem(`project context disabled by saved decision at ${trust.snapshot.savedPath ?? this.options.cwd}; use /trust once to override this session`);
+      return;
+    }
+    const resources = trust.resources.slice(0, 6).map((item) => `  ${item.scope}:${item.name} · ${displayPath(item.path, this.options.cwd)}`);
+    const omitted = trust.resources.length > resources.length ? `\n  … ${trust.resources.length - resources.length} more` : "";
+    const error = trust.snapshot.error ? `\n${colors.warning(`Trust store warning: ${sanitizeError(trust.snapshot.error)}`)}` : "";
+    this.transcript.addChild(new Text(
+      `${colors.ice("PROJECT CONTEXT TRUST")}\n${this.options.cwd}\n${resources.join("\n") || "  .pi project settings/resources"}${omitted}${error}\nType y=enable once, a=enable and remember, n=disable once, d=disable and remember.\nTool approval remains independent. Project extensions stay disabled.`,
+      1,
+      0,
+    ));
+    this.pendingProjectTrust = true;
+    this.updateStatus("waiting project trust");
+  }
+
+  private async handleProjectTrustInput(input: string): Promise<void> {
+    const normalized = input.toLowerCase();
+    const choice = normalized === "y" || normalized === "yes"
+      ? { trusted: true, remember: false }
+      : normalized === "a" || normalized === "always"
+        ? { trusted: true, remember: true }
+        : normalized === "n" || normalized === "no"
+          ? { trusted: false, remember: false }
+          : normalized === "d" || normalized === "deny"
+            ? { trusted: false, remember: true }
+            : undefined;
+    if (!choice) {
+      this.addError("choose y, a, n, or d before submitting a task");
+      this.pendingProjectTrust = true;
+      return;
+    }
+    await this.applyProjectTrust(choice.trusted, choice.remember);
+  }
+
+  private async handleTrustCommand(argument: string): Promise<void> {
+    const trust = this.options.projectTrust;
+    if (!trust?.required) {
+      this.addSystem("project trust is not required; no project context resources were discovered");
+      return;
+    }
+    if (!argument) {
+      this.addSystem(`project trust=${this.projectTrustStatus}; resources=${trust.resources.length}; use /trust once|always|off|deny`);
+      return;
+    }
+    if (this.session.isStreaming || this.options.sessionControls.snapshot().compacting) {
+      this.addError("project trust cannot change during an active operation");
+      return;
+    }
+    const choice = argument === "once"
+      ? { trusted: true, remember: false }
+      : argument === "always"
+        ? { trusted: true, remember: true }
+        : argument === "off"
+          ? { trusted: false, remember: false }
+          : argument === "deny"
+            ? { trusted: false, remember: true }
+            : undefined;
+    if (!choice) {
+      this.addError("usage: /trust [once|always|off|deny]");
+      return;
+    }
+    await this.applyProjectTrust(choice.trusted, choice.remember);
+  }
+
+  private async applyProjectTrust(trusted: boolean, remember: boolean): Promise<void> {
+    if (!this.options.setProjectTrust) {
+      this.addError("project trust is unavailable in this runtime");
+      return;
+    }
+    this.pendingProjectTrust = false;
+    this.updateStatus("reloading trusted context");
+    try {
+      const warning = await this.options.setProjectTrust(trusted, remember);
+      this.projectTrustStatus = trusted ? "trusted" : "untrusted";
+      const snapshot = this.options.getContextSnapshot();
+      this.addSystem(
+        `project context ${trusted ? "enabled" : "disabled"}${remember && !warning ? " and remembered" : " for this session"}; AGENTS=${snapshot.agentsFiles.length} Skills=${snapshot.skills.length} Prompts=${snapshot.prompts.length}`,
+      );
+      if (warning) this.addError(`trust decision applied for this session but was not remembered: ${warning}`);
+      this.updateStatus("idle");
+    } catch (error) {
+      this.addError(`project trust change failed: ${sanitizeError(error)}`);
+      this.updateStatus("idle");
+    }
+  }
+
   private showContextSummary(): void {
     const snapshot = this.options.getContextSnapshot();
     const agentCharacters = snapshot.agentsFiles.reduce((total, file) => total + (file.characters ?? 0), 0);
@@ -962,6 +1085,7 @@ export class InteractiveMode {
         `  Prompt templates         ${snapshot.prompts.length} discoverable`,
         `  Diagnostics              ${diagnosticSummary}`,
         `  Project resources        ${snapshot.projectResourcesEnabled ? "enabled" : "disabled"}`,
+        `  Project trust            ${this.options.projectTrust?.required ? this.projectTrustStatus : "not required"}`,
         `  Tool approval            ${this.options.approvalMode} (independent from context trust)`,
         `  Agent mode               ${this.agentMode} (plan exposes read-only tools)`,
       ].join("\n"),
@@ -983,6 +1107,10 @@ export class InteractiveMode {
       return;
     }
     const enabled = argument === "on";
+    if (enabled && this.options.projectTrust?.required && this.projectTrustStatus !== "trusted") {
+      this.addError("project resources are untrusted; use /trust once or /trust always first");
+      return;
+    }
     if (enabled === current) {
       this.addSystem(`project resources already ${enabled ? "enabled" : "disabled"}`);
       return;
@@ -1017,6 +1145,7 @@ export class InteractiveMode {
       const model = resolveDeepSeekModel(this.options.modelRegistry, modelId.replace(/^deepseek\//, ""));
       await this.session.setModel(model);
       this.addSystem(`model changed to ${DEEPSEEK_PROVIDER}/${model.id}`);
+      this.persistPreference({ model: model.id });
     } catch (error) {
       this.addError(error instanceof Error ? error.message : String(error));
     }
@@ -1044,6 +1173,7 @@ export class InteractiveMode {
       this.options.setAgentMode(nextMode);
       this.agentMode = nextMode;
       this.addSystem(`agent mode changed to ${nextMode}; active tools: ${this.session.getActiveToolNames().join(", ") || "none"}`);
+      this.persistPreference({ mode: nextMode });
     } catch (error) {
       this.addError(`agent mode change failed: ${sanitizeError(error)}`);
     }
@@ -1061,9 +1191,49 @@ export class InteractiveMode {
     }
     this.session.setThinkingLevel(level as ThinkingLevel);
     this.addSystem(`thinking changed to ${this.session.thinkingLevel}`);
+    this.persistPreference({ thinking: this.session.thinkingLevel as ProductPreferences["thinking"] });
+  }
+
+  private handleSettingsCommand(argument: string): void {
+    if (!argument) {
+      this.addSystem([
+        "USER SETTINGS",
+        `  file       ${this.options.settingsPath ?? "in-memory"}`,
+        `  model      ${this.session.model?.id ?? "none"}`,
+        `  thinking   ${this.session.thinkingLevel}`,
+        `  mode       ${this.agentMode}`,
+        `  approval   ${this.options.approvalMode} (current)`,
+        `  reasoning  ${this.showReasoning ? "expanded" : "collapsed"}`,
+        "Use /settings approval <ask|auto-read|deny> for the next launch.",
+      ].join("\n"));
+      return;
+    }
+    const [field, value, ...extra] = argument.split(/\s+/);
+    if (field !== "approval" || !value || extra.length > 0 || !APPROVAL_MODES.includes(value as ApprovalMode)) {
+      this.addError("usage: /settings [approval <ask|auto-read|deny>]");
+      return;
+    }
+    if (this.persistPreference({ approval: value as ApprovalMode })) {
+      this.addSystem(`default approval saved as ${value}; current session remains ${this.options.approvalMode}`);
+    }
+  }
+
+  private persistPreference(patch: Partial<ProductPreferences>): boolean {
+    if (!this.options.savePreferences) return false;
+    try {
+      this.options.savePreferences(patch);
+      return true;
+    } catch (error) {
+      this.addError(`settings save failed: ${sanitizeError(error)}`);
+      return false;
+    }
   }
 
   private async handleCtrlC(): Promise<void> {
+    if (this.pendingProjectTrust) {
+      await this.applyProjectTrust(false, false);
+      return;
+    }
     if (this.pendingApproval) {
       const approval = this.pendingApproval;
       this.pendingApproval = undefined;
