@@ -180,6 +180,12 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 源码确认事实：3 次都经过完整的“外部隐藏测试失败 → evaluator 最小摘要 → 新内存 Session 读取共享工作区 → 修复 → 隐藏测试通过”。设计推断：短摘要在这个固定小任务上表现稳定，并显著避免了之前 31 次工具错误的抖动；但样本同质且只有 3 次，不能推广为所有真实仓库或模型档位的统计结论。
 
+### 7.2 高区分度任务重复与 Profile A/B
+
+`repair-cross-module`、`repair-long-log`、`repair-validation` 在 Pi Profile 下各运行 3 次，全部通过；工具调用分别为 31/12/30，工具错误为 0/1/3。validation 三次均首轮失败并在摘要反馈后恢复，证明反馈路径稳定发生，而不是单次偶然。
+
+同一矩阵切换到现有 DeepSeek Profile 后仍为 9/9，但总体平均耗时高 10.8%、总成本高 4.9%；工具调用从 73 降为 69，工具错误从 4 降为 2。长日志任务单独改善，但 validation 明显变慢、变贵，因此默认保持 Pi Profile，不增加按任务隐藏路由。完整逐任务数据、方法和结论边界见 `high-discrimination-profile-ab.md`。
+
 ## 8. 优化准入与回滚
 
 任何 prompt、工具描述或上下文策略变化都按以下顺序验证：
@@ -192,9 +198,9 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 ## 9. 下一步
 
-- Prompt Profile 首轮重复 A/B 已完成：18 个 repair 样本均通过，`deepseek` 没有质量收益且总体效率略差，默认继续使用 `pi`。详见 `prompt-profile-ab.md`。
+- 两轮 Prompt Profile A/B 已完成：轻量任务和高区分度任务共 36 个逻辑样本均通过，`deepseek` 没有成功率收益且总体效率没有稳定改善，默认继续使用 `pi`。详见 `prompt-profile-ab.md` 与 `high-discrimination-profile-ab.md`。
 - 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
-- 对新增 `repair-cross-module`、`repair-long-log`、`repair-validation` 先做 Flash/high 单次受控基线，再以重复样本比较 prompt、工具、thinking 与模型策略；fixture 已进入 suite，但未完成的真实重复数据不写成优化结论。
+- Prompt 调词暂停；下一步优先评估只读 diagnostics/语义导航，再用相同高区分度 suite 判断真实仓库定位能力是否改善。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。
 - 只有在普通 Schema 失败样本足够明确后，再在 playground 研究 strict tool mode。
