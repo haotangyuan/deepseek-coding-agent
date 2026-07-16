@@ -31,6 +31,7 @@ import {
   createProjectResourceFilter,
   type ProjectResourceFilter,
 } from "./context-resources.ts";
+import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import { EvaluationMetricsCollector } from "./evaluation.ts";
 import { InteractiveMode } from "./interactive.ts";
 import {
@@ -301,13 +302,22 @@ export async function runCli(
   let wroteText = false;
   let mutatingToolSucceeded = false;
   let metrics: EvaluationMetricsCollector | undefined;
+  const evidence = new CompletionEvidenceCollector(dependencies.cwd);
   let metricsWritten = false;
+  let evidenceWritten = false;
   let abortListener: (() => void) | undefined;
   const writeMetrics = (success: boolean): void => {
     if (!parsed.metrics || !metrics || !session || metricsWritten) return;
     const report = metrics.finish(session.getSessionStats(), success);
     io.stderr(`[metrics] ${JSON.stringify(report)}\n`);
     metricsWritten = true;
+  };
+  const writeEvidence = (): void => {
+    if (evidenceWritten || !session) return;
+    const summary = summarizeCompletionEvidence(evidence.snapshot());
+    io.stderr(`[evidence]\n${sanitizeError(summary.detail)}\n`);
+    if (summary.attention.length > 0) io.stderr(`[evidence:attention] ${sanitizeError(summary.attention.join("; "))}\n`);
+    evidenceWritten = true;
   };
   try {
     const toolPolicy = createToolPolicy({
@@ -338,6 +348,7 @@ export async function runCli(
     metrics = new EvaluationMetricsCollector(model.id, session.thinkingLevel ?? parsed.thinkingLevel);
     session.subscribe((event) => {
       metrics?.observe(event);
+      evidence.observe(event);
       if (
         event.type === "tool_execution_end" &&
         !event.isError &&
@@ -356,6 +367,7 @@ export async function runCli(
     });
     await session.prompt(parsed.task);
     if (runOptions.signal?.aborted) throw runOptions.signal.reason;
+    writeEvidence();
     writeMetrics(true);
     if (session.sessionId) {
       io.stderr(`[session] id=${session.sessionId} persisted=${session.sessionFile ? "yes" : "no"}\n`);
@@ -367,6 +379,7 @@ export async function runCli(
     }
     return 0;
   } catch (error) {
+    writeEvidence();
     writeMetrics(false);
     io.stderr(`[error] ${sanitizeError(error)}\n`);
     return 1;

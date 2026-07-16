@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { relative } from "node:path";
 import { DEEPSEEK_PROVIDER, resolveDeepSeekModel, sanitizeError } from "./cli.ts";
+import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import type { ContextResourceItem, ContextSnapshot } from "./context-resources.ts";
 import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import { sessionDisplayName, sessionFileName, type SessionControls } from "./sessions.ts";
@@ -289,11 +290,13 @@ export class InteractiveMode {
   private exiting = false;
   private lastIdleCtrlC = 0;
   private mutatingToolSucceeded = false;
+  private readonly completionEvidence: CompletionEvidenceCollector;
   private unsubscribe: (() => void) | undefined;
 
   constructor(options: InteractiveModeOptions) {
     this.options = options;
     this.session = options.session;
+    this.completionEvidence = new CompletionEvidenceCollector(options.cwd);
     this.tui = new TUI(options.terminal ?? new ProcessTerminal());
     this.status = new StatusLine("");
     this.editor = new InteractiveEditor(this.tui, (text) => void this.handleSubmit(text), () => void this.handleCtrlC());
@@ -425,7 +428,9 @@ export class InteractiveMode {
       return;
     }
 
+    const continuingRun = this.session.isStreaming;
     this.transcript.addChild(new Text(`${colors.accent("you")}  ${sanitizeError(text)}`, 1, 0));
+    if (!continuingRun) this.completionEvidence.reset();
     this.resetTurnComponents();
     this.updateStatus(this.session.isStreaming ? "queued steering" : "running");
     this.tui.requestRender();
@@ -774,6 +779,7 @@ export class InteractiveMode {
   }
 
   private handleEvent(event: AgentSessionEvent): void {
+    this.completionEvidence.observe(event);
     if (event.type === "message_update") {
       const update = event.assistantMessageEvent;
       if (update.type === "thinking_delta") {
@@ -891,6 +897,14 @@ export class InteractiveMode {
       }
       this.updateStatus("idle");
     } else if (event.type === "agent_settled") {
+      const summary = summarizeCompletionEvidence(this.completionEvidence.snapshot());
+      this.transcript.addChild(new NoticeCard({
+        title: summary.attention.length > 0 ? "COMPLETION EVIDENCE · REVIEW" : "COMPLETION EVIDENCE",
+        detail: sanitizeError(summary.detail),
+        action: summary.attention.length > 0 ? sanitizeError(summary.attention.join("; ")) : undefined,
+        footer: "Observed facts only · no extra model request",
+        tone: summary.attention.length > 0 ? colors.warning : colors.success,
+      }));
       this.updateStatus("idle");
       if (this.mutatingToolSucceeded) {
         this.mutatingToolSucceeded = false;

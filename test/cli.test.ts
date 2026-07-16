@@ -162,9 +162,15 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
           prompt: async (text) => {
             prompt = text;
             listener?.({
+              type: "tool_execution_start",
+              toolCallId: "1",
+              toolName: "edit",
+              args: { path: "README.md", edits: [] },
+            });
+            listener?.({
               type: "tool_execution_end",
               toolCallId: "1",
-              toolName: "bash",
+              toolName: "edit",
               result: { content: [] },
               isError: false,
             });
@@ -205,6 +211,8 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(prompt, "say ok");
   assert.equal(stdout.join(""), "");
   assert.match(stderr.join(""), /agent:complete/);
+  assert.match(stderr.join(""), /\[evidence\].*files=README\.md.*bash=0 · tool-errors=0/s);
+  assert.match(stderr.join(""), /evidence:attention.*no recognized validation/s);
   assert.match(stderr.join(""), /git:status.*README\.md/s);
   assert.match(stderr.join(""), /\[metrics\].*"cacheHitRate":0\.75/);
 });

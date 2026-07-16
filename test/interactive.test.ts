@@ -308,6 +308,10 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
   await flush();
   assert.match(plainTerminalOutput(terminal), /\[tool:read\] done read ok/);
 
+  session.emit({ type: "agent_settled" });
+  await flush();
+  assert.match(plainTerminalOutput(terminal), /COMPLETION EVIDENCE.*files=none recorded.*Observed facts only/s);
+
   session.emit({
     type: "tool_execution_end",
     toolCallId: "bash-1",
