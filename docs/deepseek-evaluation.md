@@ -186,6 +186,12 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 同一矩阵切换到现有 DeepSeek Profile 后仍为 9/9，但总体平均耗时高 10.8%、总成本高 4.9%；工具调用从 73 降为 69，工具错误从 4 降为 2。长日志任务单独改善，但 validation 明显变慢、变贵，因此默认保持 Pi Profile，不增加按任务隐藏路由。完整逐任务数据、方法和结论边界见 `high-discrimination-profile-ab.md`。
 
+### 7.3 只读 TypeScript Diagnostics 首个闭环
+
+新增 `repair-typescript-diagnostics`，评分不仅检查文件和编译结果，还要求事件指标中真实出现 `diagnostics`。Flash/high + Pi Profile 最终验证通过，工具序列为 `diagnostics → read → edit → diagnostics`；耗时 9.857 秒、成本 `$0.0004695712`、4 次工具调用、0 工具错误、0 Provider 错误。
+
+源码确认事实：模型先用 TS2322 定位 `src/registry.ts`，修改后再次运行 diagnostics 并得到零错误；`tsconfig.json` 和消费者文件未变化，没有额外文件。设计推断：结构化编译证据比继续追加通用工作流规则更可能改善真实定位效率。单样本只证明链路有效，不能证明总体成功率提升；详细边界见 `readonly-diagnostics.md`。
+
 ## 8. 优化准入与回滚
 
 任何 prompt、工具描述或上下文策略变化都按以下顺序验证：
@@ -200,7 +206,7 @@ npm start -- --ephemeral --metrics --thinking high --approval deny "Reply with O
 
 - 两轮 Prompt Profile A/B 已完成：轻量任务和高区分度任务共 36 个逻辑样本均通过，`deepseek` 没有成功率收益且总体效率没有稳定改善，默认继续使用 `pi`。详见 `prompt-profile-ab.md` 与 `high-discrimination-profile-ab.md`。
 - 对 80 列恢复卡片做真实网络抖动观察；自动化继续用事件替身覆盖错误与重试，避免为了制造失败调用付费 API。
-- Prompt 调词暂停；下一步优先评估只读 diagnostics/语义导航，再用相同高区分度 suite 判断真实仓库定位能力是否改善。
+- Prompt 调词暂停；只读 TypeScript diagnostics 的首个真实闭环已通过，下一步增加重复任务和无 diagnostics 控制组，再判断真实仓库定位能力是否改善。
 - 用重复稳定前缀和冷/热两组运行单独研究缓存，不把自然命中当成可控实验。
 - 量化大 read/tool result 的截断和按需读取策略。
 - 只有在普通 Schema 失败样本足够明确后，再在 playground 研究 strict tool mode。

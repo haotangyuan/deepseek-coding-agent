@@ -272,7 +272,7 @@ test("runCli passes the explicit DeepSeek model and emits substitute events", as
   assert.equal(code, 0);
   assert.equal(selectedModel?.provider, "deepseek");
   assert.equal(selectedModel?.id, "deepseek-v4-flash");
-  assert.deepEqual(selectedTools, ["read", "ls", "grep", "write", "edit", "bash"]);
+  assert.deepEqual(selectedTools, ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"]);
   assert.equal(selectedSession, "new");
   assert.equal(restoreSavedModel, false);
   assert.equal(selectedThinking, "max");

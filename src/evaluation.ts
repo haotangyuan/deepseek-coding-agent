@@ -17,6 +17,7 @@ export interface EvaluationMetrics {
   retries: number;
   providerErrors: number;
   providerErrorCategories: DeepSeekErrorCategory[];
+  toolNames: string[];
   eventSequence: string[];
   tokens: SessionStats["tokens"];
   cacheHitRate: number;
@@ -38,6 +39,7 @@ export class EvaluationMetricsCollector {
   private retries = 0;
   private providerErrors = 0;
   private readonly providerErrorCategories = new Set<DeepSeekErrorCategory>();
+  private readonly toolNames: string[] = [];
   private readonly eventSequence: string[] = [];
 
   constructor(
@@ -69,6 +71,7 @@ export class EvaluationMetricsCollector {
     } else if (event.type === "tool_execution_start") {
       this.markResponse(timestamp);
       this.toolCalls += 1;
+      this.toolNames.push(event.toolName);
     } else if (event.type === "tool_execution_end") {
       if (event.isError) this.toolErrors += 1;
       else this.toolSuccesses += 1;
@@ -102,6 +105,7 @@ export class EvaluationMetricsCollector {
       retries: this.retries,
       providerErrors: this.providerErrors,
       providerErrorCategories: [...this.providerErrorCategories],
+      toolNames: [...this.toolNames],
       eventSequence: [...this.eventSequence],
       tokens: stats.tokens,
       cacheHitRate: promptTokens === 0 ? 0 : stats.tokens.cacheRead / promptTokens,

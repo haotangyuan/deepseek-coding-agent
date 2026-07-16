@@ -74,7 +74,7 @@ flowchart TB
     SessionUX --> Session
     Session --> Loop["Pi Agent Loop"]
     Loop --> Provider["Pi DeepSeek Provider"]
-    Loop <--> Tools["Pi read/ls/grep/write/edit/bash"]
+    Loop <--> Tools["Pi tools + read-only diagnostics"]
     Session <--> Store["Pi Session JSONL / Compaction"]
     Session --> Events["Pi AgentSessionEvent"]
     Events --> UX
@@ -92,6 +92,7 @@ flowchart TB
 
 - 只允许 DeepSeek，显式模型和 thinking 策略。
 - 工具权限、审批、敏感路径、工作区边界和产品提示。
+- 只读 TypeScript diagnostics 的注册、边界和评测；不修改 Pi Agent Loop。
 - TUI 信息层级、快捷操作、错误恢复和本轮完成证据。
 - 项目上下文的可见性、信任入口和本地设置。
 - 本轮 diff、撤销、验证闭环以及本项目自己的评测。
@@ -113,6 +114,7 @@ flowchart TB
 | 事件输出 | text、thinking、tool、retry、error、complete 分通道输出并脱敏 | `src/cli.ts:199` `formatAgentEvent()`；`test/cli.test.ts` | 稳定 |
 | Agent Loop | 直接通过 Pi `createAgentSession()`，不复制循环 | `src/main.ts:124` `productionDependencies()`；`src/main.ts:160` | 稳定，依赖 Pi |
 | 仓库探索 | read、ls、grep；受 cwd、realpath、symlink 和敏感路径保护 | `src/tool-policy.ts:96`、`:233`；`test/tool-policy.test.ts` | 可用；缺 find 依赖诊断 |
+| TypeScript 诊断 | 根 tsconfig 的只读 Compiler API 诊断；不执行项目脚本、不 emit；Plan/Build 均可用 | `src/diagnostics.ts`；`test/diagnostics.test.ts` | 首个切片可用；暂不支持 monorepo/Python/LSP |
 | 修改与命令 | write/edit/bash 默认询问；审批 diff；本轮聚合 `/diff`；冲突安全 `/undo confirm`；Bash 精确授权 | `src/tool-policy.ts`；`src/checkpoints.ts` `TurnCheckpointManager`；`test/checkpoints.test.ts` | write/edit 可逆；Bash 副作用不覆盖 |
 | Plan/Build | Plan 从模型可见工具中移除修改工具，策略层仍二次阻断；Build 继续受审批控制 | `src/tool-policy.ts:233`；`src/main.ts:236` | 稳定 |
 | 交互 TUI | 多轮、Markdown、折叠 thinking、可展开工具卡、长结果分页/搜索、审批、steering、取消、恢复卡、状态栏、动态补全，以及 Pi Session/Tree 选择器 | `src/interactive.ts` `InteractiveMode`、`ToolActivityCard`；`src/tool-output.ts`；`src/autocomplete.ts`；对应测试 | 日用可用；日志查看仍是命令式入口 |
@@ -124,7 +126,7 @@ flowchart TB
 | 错误恢复 | DeepSeek 官方错误分类；Pi retry 事件可视化；Ctrl+C abort | `src/deepseek-errors.ts:71`；`src/interactive.ts:837` | 可用 |
 | 评测 | 3 个协议基线 + 7 个 repair 任务；覆盖跨模块发现、长日志、隐藏验证反馈、成本边界和按任务聚合 | `src/eval.ts` 的 `TASKS`、`executeRepairTask()`；`src/eval-report.ts`；`test/evaluation.test.ts` | 新增任务重复基线和双 Profile A/B 已完成 |
 
-当前自动化共 98 项，覆盖纯函数、替身 Session、临时目录工具、80×24/100×30 TUI、流式/截断/失败工具卡、结果分页/搜索/取消、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、命名验证预览与确认、本地设置、项目信任、Prompt Profile 与 Pi ResourceLoader 组合、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
+当前自动化共 102 项，覆盖纯函数、替身 Session、临时目录工具、80×24/100×30 TUI、流式/截断/失败工具卡、结果分页/搜索/取消、Pi Session/Tree 选择器、本轮 checkpoint/Resume/冲突保护、命名验证预览与确认、本地设置、项目信任、Prompt Profile、只读 TypeScript diagnostics、SessionManager、Doctor、补全安全边界和评测汇总。真实 API 只用于受控 smoke。
 
 ## 5. 当前真实可用路径
 
@@ -140,7 +142,7 @@ flowchart TB
 ### 5.2 仍然会造成日常摩擦
 
 1. **验证选择仍需人工判断**：项目可声明多个命令，但产品不会根据本轮修改文件自动猜测最相关的一条。
-2. **语义化代码导航有限**：仓库理解仍主要依赖 read/ls/grep；重复评测已完成，下一步应验证只读 diagnostics 是否比继续调 Prompt 更有收益。
+2. **语义化代码导航仍有限**：TypeScript 根 tsconfig diagnostics 已可用，但 monorepo、多配置、Python、定义/引用导航和可取消 worker 尚未实现。
 
 ## 6. 外部产品带来的设计启发
 
@@ -377,7 +379,7 @@ flowchart TB
 
 只有 P0/P1 稳定后再评估：
 
-- TypeScript/Python 只读 diagnostics，先调用现有编译器，再考虑 LSP。
+- TypeScript 根 tsconfig 只读 diagnostics 已完成首个切片；后续先补可取消 worker、monorepo 和 Python，再考虑 LSP。
 - 可配置的本地 post-edit hook，用于格式化或轻量检查；默认关闭并受项目信任控制。
 - apply_patch 工具，仅在收集到 edit 无法可靠表达的失败样本后评估。
 - 容器化执行 profile，用于需要强隔离的演示任务；不把它与普通审批混为一谈。

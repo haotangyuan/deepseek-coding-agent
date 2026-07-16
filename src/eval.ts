@@ -12,6 +12,7 @@ import { classifyDeepSeekError } from "./deepseek-errors.ts";
 import { summarizeEvalTasks, type EvalSampleResult, type EvalTaskKind, type EvalTaskPlan, type EvalTaskSummary } from "./eval-report.ts";
 import { runCli } from "./main.ts";
 import { DEFAULT_PROMPT_PROFILE, PROMPT_PROFILES, type PromptProfile } from "./prompt-profile.ts";
+import { collectTypeScriptDiagnostics } from "./diagnostics.ts";
 
 interface EvalTask {
   id: string;
@@ -20,6 +21,7 @@ interface EvalTask {
   prompt: string;
   expected: string;
   requiredToolResult?: "success" | "error";
+  requiredToolName?: string;
   maxAttempts?: 2;
   feedbackRequired?: boolean;
 }
@@ -186,6 +188,15 @@ const TASKS: EvalTask[] = [
     requiredToolResult: "success",
     maxAttempts: 2,
   },
+  {
+    id: "repair-typescript-diagnostics",
+    kind: "repair",
+    approval: "ask",
+    prompt: "This TypeScript workspace no longer compiles. Use the diagnostics tool first, inspect the reported source location, and fix only the faulty source file. Do not modify tsconfig.json or run shell commands. Reply with exactly FIXED after editing.",
+    expected: "FIXED",
+    requiredToolResult: "success",
+    requiredToolName: "diagnostics",
+  },
 ];
 
 const REPAIR_SOURCE = `export function add(left, right) {\n  return left - right;\n}\n`;
@@ -210,6 +221,18 @@ const CI_LOG = [
   ...Array.from({ length: 240 }, (_, index) => `2026-07-16T10:06:${String(index % 60).padStart(2, "0")}Z INFO cleanup worker=${index % 6}`),
 ].join("\n");
 const CSV_SOURCE = `export function parseCsv(text) {\n  return text.trimEnd().split(/\\r?\\n/).map((row) => row.split(",").slice(0, -1));\n}\n`;
+const TYPESCRIPT_DIAGNOSTIC_SOURCE = `export interface Plugin {\n  name: string;\n  enabled: boolean;\n}\n\nexport function enabledPluginNames(plugins: Plugin[]): string[] {\n  return plugins.filter((plugin) => plugin.enabled).map((plugin) => plugin);\n}\n`;
+const TYPESCRIPT_CONSUMER_SOURCE = `import { enabledPluginNames, type Plugin } from "./registry.js";\n\nexport function summarizePlugins(plugins: Plugin[]): string {\n  return enabledPluginNames(plugins).join(", ");\n}\n`;
+const TYPESCRIPT_CONFIG = `${JSON.stringify({
+  compilerOptions: {
+    strict: true,
+    noEmit: true,
+    target: "ES2022",
+    module: "NodeNext",
+    moduleResolution: "NodeNext",
+  },
+  include: ["src/**/*.ts"],
+}, null, 2)}\n`;
 const REPAIR_FIXTURES: Record<string, RepairFixture> = {
   "repair-js": {
     files: {
@@ -271,6 +294,15 @@ const REPAIR_FIXTURES: Record<string, RepairFixture> = {
     },
     expectedChangedFiles: ["src/csv.mjs"],
     protectedFiles: [],
+  },
+  "repair-typescript-diagnostics": {
+    files: {
+      "tsconfig.json": TYPESCRIPT_CONFIG,
+      "src/registry.ts": TYPESCRIPT_DIAGNOSTIC_SOURCE,
+      "src/consumer.ts": TYPESCRIPT_CONSUMER_SOURCE,
+    },
+    expectedChangedFiles: ["src/registry.ts"],
+    protectedFiles: ["tsconfig.json", "src/consumer.ts"],
   },
 };
 const execFileAsync = promisify(execFile);
@@ -340,6 +372,7 @@ export function evalUsage(): string {
 
 function score(task: EvalTask, output: string, metrics: EvaluationMetrics | undefined): boolean {
   if (!metrics?.success || (task.kind === "protocol" && output.trim() !== task.expected)) return false;
+  if (task.requiredToolName && !metrics.toolNames.includes(task.requiredToolName)) return false;
   if (task.requiredToolResult === "success") return metrics.toolSuccesses > 0;
   if (task.requiredToolResult === "error") return metrics.toolErrors > 0;
   return true;
@@ -473,6 +506,12 @@ export function shouldRetryRepair(
 async function runRepairTests(task: EvalTask, fixture: string): Promise<TestRun> {
   let evaluatorDir: string | undefined;
   try {
+    if (task.id === "repair-typescript-diagnostics") {
+      const report = collectTypeScriptDiagnostics(fixture);
+      return report.available && report.errorCount === 0
+        ? { passed: true, output: "" }
+        : { passed: false, output: report.diagnostics.map((diagnostic) => `${diagnostic.path ?? "tsconfig.json"} TS${diagnostic.code}: ${diagnostic.message}`).join("\n") };
+    }
     let args = ["--test"];
     let cwd = fixture;
     if (task.id === "repair-feedback" || task.id === "repair-validation") {

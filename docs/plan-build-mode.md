@@ -14,8 +14,8 @@ Plan/Build 提供一个明确、可见、在工具层真实生效的工作状态
 
 | Agent 模式 | `ask` | `auto-read` | `deny` |
 |---|---|---|---|
-| `plan` | read/ls/grep | read/ls/grep | 无工具 |
-| `build` | read/ls/grep/write/edit/bash；修改逐次审批 | read/ls/grep | 无工具 |
+| `plan` | read/ls/grep/diagnostics | read/ls/grep/diagnostics | 无工具 |
+| `build` | read/ls/grep/diagnostics/write/edit/bash；修改逐次审批 | read/ls/grep/diagnostics | 无工具 |
 
 Plan/Build 回答“模型能看到哪些能力”，approval 回答“可见能力如何授权”。Build 不是 bypass，也不会自动批准任何高影响工具。
 
@@ -51,6 +51,7 @@ flowchart LR
 
 - Plan 保证没有本项目注册的修改/Shell 工具，不保证模型输出固定 JSON 或固定格式计划。
 - Plan 不是 OS 沙箱；模型仍能读取工作区内文件，未来若加入其他自定义工具，必须显式分类后才能进入模式矩阵。
+- diagnostics 使用产品自身 TypeScript Compiler API，只读根 tsconfig；不执行项目脚本，也不等同于隔离编译器。
 - Build 仍受 workspace/symlink、危险 Bash 和审批策略约束。
 - 项目 Extension 仍默认禁用，不能通过第三方工具绕过模式。
 

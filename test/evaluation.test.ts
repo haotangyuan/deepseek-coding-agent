@@ -35,9 +35,11 @@ test("evaluation parser defaults to dry-run and rejects unsafe matrices", () => 
   assert.equal(parseEvalArgs(["--task", "repair-cross-module"]).task, "repair-cross-module");
   assert.equal(parseEvalArgs(["--task", "repair-long-log"]).task, "repair-long-log");
   assert.equal(parseEvalArgs(["--task", "repair-validation"]).task, "repair-validation");
+  assert.equal(parseEvalArgs(["--task", "repair-typescript-diagnostics"]).task, "repair-typescript-diagnostics");
   assert.match(evalUsage(), /repair-cross-module/);
   assert.match(evalUsage(), /repair-long-log/);
   assert.match(evalUsage(), /repair-validation/);
+  assert.match(evalUsage(), /repair-typescript-diagnostics/);
   assert.throws(() => parseEvalArgs(["--model", "openai/gpt-5"]), /only allows the deepseek provider/i);
   assert.throws(() => parseEvalArgs(["--model", "deepseek/"]), /Model ID cannot be empty/);
   assert.throws(() => parseEvalArgs(["--thinking", "medium"]), /Invalid thinking level/);
@@ -216,6 +218,7 @@ test("metrics collector records latency, reasoning, tools, cache and ordered eve
   assert.equal(metrics.reasoningChars, 4);
   assert.equal(metrics.textChars, 2);
   assert.equal(metrics.toolCalls, 1);
+  assert.deepEqual(metrics.toolNames, ["read"]);
   assert.equal(metrics.toolSuccesses, 1);
   assert.equal(metrics.cacheHitRate, 0.75);
   assert.deepEqual(metrics.providerErrorCategories, []);

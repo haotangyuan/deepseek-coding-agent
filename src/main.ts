@@ -36,6 +36,7 @@ import {
 } from "./context-resources.ts";
 import { CompletionEvidenceCollector, summarizeCompletionEvidence } from "./completion-evidence.ts";
 import { EvaluationMetricsCollector } from "./evaluation.ts";
+import { createDiagnosticsExtension } from "./diagnostics.ts";
 import { collectDoctorReport, type DoctorReport, renderDoctorReport } from "./doctor.ts";
 import { InteractiveMode } from "./interactive.ts";
 import { ProductProjectTrust } from "./project-trust.ts";
@@ -184,7 +185,11 @@ function productionDependencies(): CliDependencies {
       agentDir,
       settingsManager,
       noExtensions: true,
-      extensionFactories: [createToolPolicyExtension(options.toolPolicy), createTurnCheckpointExtension(checkpoints)],
+      extensionFactories: [
+        createDiagnosticsExtension(cwd),
+        createToolPolicyExtension(options.toolPolicy),
+        createTurnCheckpointExtension(checkpoints),
+      ],
       skillsOverride: resourceFilter.skillsOverride,
       promptsOverride: resourceFilter.promptsOverride,
       agentsFilesOverride: resourceFilter.agentsFilesOverride,

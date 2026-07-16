@@ -19,7 +19,7 @@
 - 支持 `ask`、`auto-read`、`deny` 三种工具审批模式；默认 `ask`。
 - Bash 审批支持“允许一次”或“当前进程允许完全相同命令”；不使用通配符、不跨进程/Session 恢复，命令变化后重新询问。
 - 支持显式 `plan`/`build` Agent 模式；Plan 从 Pi 活动工具集合移除 write/edit/bash，Build 恢复审批控制的完整工具集，默认 `build + ask`。
-- 直接复用 Pi 的 read/ls/grep 做受限仓库探索；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
+- 直接复用 Pi 的 read/ls/grep 做受限仓库探索，并提供不执行项目脚本、不产生构建文件的只读 TypeScript `diagnostics`；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
 - 默认保护 `.env`、常见凭据目录/文件和 SSH 私钥名；公开的 `.env.example/.sample/.template` 仍可读写，明显 Bash 敏感路径字面量在审批前阻断。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
 - 通过 `/diff` 集中审阅最近修改轮次的 write/edit 增量；`/undo` + `/undo confirm` 在冲突检查后恢复任务前文件状态，并支持 Session resume 后继续撤销。
@@ -137,7 +137,7 @@ Enter 提交，Shift+Enter 换行。生成期间提交的新消息作为 steerin
 
 `/settings` 查看当前生效偏好和本地文件位置；`/model`、`/thinking`、`/mode`、`/reasoning` 会保存下一次启动的默认值，`/settings approval <mode>` 保存下次启动的审批模式。设置只接受固定的非敏感字段，不能保存 API Key；损坏文件会回退到 `deepseek-v4-flash + high + build + ask`，并保持只读直到用户手动修复。完整边界见 [docs/local-settings-and-project-trust.md](docs/local-settings-and-project-trust.md)。
 
-`/mode plan` 只允许空闲时切换，并通过 Pi `AgentSession.setActiveToolsByName()` 将下一轮工具缩减为 read/ls/grep；`/mode build` 恢复当前审批模式允许的工具。模式只影响当前进程，不写入 Session JSONL；恢复会话时使用 CLI 默认值或显式 `--mode`。
+`/mode plan` 只允许空闲时切换，并通过 Pi `AgentSession.setActiveToolsByName()` 将下一轮工具缩减为 read/ls/grep/diagnostics；`/mode build` 恢复当前审批模式允许的工具。模式只影响当前进程，不写入 Session JSONL；恢复会话时使用 CLI 默认值或显式 `--mode`。`diagnostics` 当前只读取根 `tsconfig.json` 并使用产品固定的 TypeScript Compiler API，详细边界见 [docs/readonly-diagnostics.md](docs/readonly-diagnostics.md)。
 
 已加载的 Skill 可用 `/skill:name 参数` 显式调用，Prompt Template 可用 `/name 参数` 调用。模型可见的 Skills 仍由 Pi 按需读取，不会由本项目复制进 System Prompt。
 
@@ -198,7 +198,7 @@ npm start -- --resume 019f65e2 "Continue the unfinished task"
 
 ## 工具审批
 
-Agent 模式与审批是两条独立轴：`plan` 决定模型是否能看到修改工具，`approval` 决定可见工具能否自动执行。默认 `build + ask`；`plan + ask` 仍只有 read/ls/grep，`build + auto-read` 也只有 read/ls/grep，`deny` 在任一模式下都不暴露工具。
+Agent 模式与审批是两条独立轴：`plan` 决定模型是否能看到修改工具，`approval` 决定可见工具能否自动执行。默认 `build + ask`；`plan + ask` 与 `build + auto-read` 都只有 read/ls/grep/diagnostics，`deny` 在任一模式下都不暴露工具。
 
 默认 `ask` 模式自动允许工作区内的 read，并在每次 write、edit、bash 前请求确认：
 
@@ -264,7 +264,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。工具结果卡见 [docs/tool-result-cards.md](docs/tool-result-cards.md)，本轮 Diff/Undo 见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+当前能力收敛和下一阶段实施顺序见 [docs/product-status-and-evolution.md](docs/product-status-and-evolution.md)，长期产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)。只读 TypeScript 诊断见 [docs/readonly-diagnostics.md](docs/readonly-diagnostics.md)，工具结果卡见 [docs/tool-result-cards.md](docs/tool-result-cards.md)，本轮 Diff/Undo 见 [docs/turn-diff-undo.md](docs/turn-diff-undo.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，进程内命令授权见 [docs/session-approvals.md](docs/session-approvals.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 

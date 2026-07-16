@@ -1,7 +1,7 @@
 # DeepSeek Coding Agent 产品与技术路线图
 
 > 文档性质：持续维护的产品、架构与开发决策基线
-> 最近更新：2026-07-16（高区分度 Prompt Profile A/B）
+> 最近更新：2026-07-16（只读 TypeScript diagnostics）
 > M1 实现基线提交：`308daaf`
 > M2 实现基线提交：`08a0dee`
 > M3 实现基线提交：`4d57b48`
@@ -343,7 +343,7 @@ Doctor/兼容门 → TUI 导航与补全 → 本轮 Diff/Undo
 
 目标：不修改 Pi Agent Loop，通过模型配置、prompt、工具和上下文策略提高 DeepSeek 的编码表现。
 
-当前进展（2026-07-16）：**评测 Schema v3、10 个协议/repair 任务、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、Completion Evidence、受信任项目验证配置、Cache Inspector、Plan/Build、敏感路径保护、精确 Bash 授权和长工具结果分页/搜索已完成，优化实验进行中。** 新增跨模块探索、长 CI 日志定位和可选反馈验证任务；评测只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制。详见 `docs/deepseek-evaluation.md` 及对应产品设计文档。
+当前进展（2026-07-16）：**评测 Schema v3、11 个协议/repair 任务、按任务聚合、错误诊断、测试反馈恢复、只读仓库发现、TypeScript diagnostics、Completion Evidence、受信任项目验证配置、Cache Inspector、Plan/Build、敏感路径保护、精确 Bash 授权和长工具结果分页/搜索已完成，优化实验进行中。** 新增类型诊断定位任务；评测只用于衡量本项目自身迭代，不建设其他 Agent 适配器或排行榜。Plan 保持只读，Build 仍受审批控制。详见 `docs/deepseek-evaluation.md` 及对应产品设计文档。
 
 实验方向：
 
@@ -471,7 +471,7 @@ npm test
 | Done | Prompt Profile 首轮量化 | 18 个 repair 样本无质量收益，默认保持 pi；后续先扩充高区分度任务 |
 | Done | 高区分度评测任务 | 已加入跨模块、长日志和可选反馈验证，并完成两档重复 A/B |
 | Done | DeepSeek Prompt 量化 | 两轮共 36 个逻辑样本无成功率收益，默认保持 pi，暂停调词 |
-| P1 | 只读 diagnostics | 优先改善真实仓库语义定位，再用现有 suite 评估收益 |
+| Done | 只读 TypeScript diagnostics 首个切片 | 根 tsconfig 编译诊断与真实修复闭环已完成；下一步做重复控制实验和可取消 worker |
 | P2 | M7 演示材料 | 从真实日用体验提炼展示，不反向驱动功能堆叠 |
 | Deferred | MCP、多 Agent、云端 | 当前目标不需要 |
 
@@ -544,9 +544,11 @@ npm test
 | D-046 | 长输出查看只消费事件结果与 Pi 临时文件 | 已采纳 | 不复制 OutputAccumulator 或执行器；分页/搜索零请求、内存有界且可独立取消，临时文件限定来源、普通文件、大小并使用 O_NOFOLLOW |
 | D-047 | 反馈型评测区分“首轮完成”与“反馈恢复” | 已采纳 | `repair-feedback` 保留强制恢复链路；一般验证任务允许首轮完整通过，避免用评分机制奖励先失败 |
 | D-048 | 高区分度 A/B 后仍保持 Pi Profile 且不做任务路由 | 已采纳 | 两档均 9/9；DeepSeek 工具错误较少但总体耗时高 10.8%、成本高 4.9%，局部长日志收益不足以支持隐藏路由 |
+| D-049 | Prompt 无质量收益后优先增加只读诊断证据 | 已采纳 | 根 tsconfig 使用产品固定 Compiler API，不执行项目脚本或 emit；先验证闭环，再扩展 monorepo/Python/LSP |
 
 ### 更新日志
 
+- **2026-07-16：** 完成只读 TypeScript diagnostics 首个切片。新增不执行项目脚本、不 emit 的根 tsconfig Compiler API 工具，Plan/Build 均可用；评测增加 `repair-typescript-diagnostics` 并要求真实工具调用。102/102 自动化通过；Flash/high + Pi Profile 最终真实链路按 `diagnostics → read → edit → diagnostics` 通过，耗时 9.857 秒、成本 `$0.0004695712`、0 工具/Provider 错误。单样本不作为总体成功率结论。
 - **2026-07-16：** 完成高区分度 Prompt Profile A/B。跨模块、长日志、隐藏验证三个任务每档各 3 次，两档均 9/9 且无 Provider 错误；DeepSeek Profile 工具调用 69 对 73、错误 2 对 4，但总体耗时高 10.8%、成本高 4.9%。默认保持 Pi，不做按任务路由，Prompt 调词暂停，下一步转向只读 diagnostics。
 - **2026-07-16：** 扩充高区分度评测。新增未显式给文件名的跨模块数量契约修复、约 480 行 CI 日志定位和 CSV 隐藏边界验证；任务总数增至 10。反馈判定新增首轮通过事实，`repair-feedback` 仍要求失败后恢复，而 `repair-validation` 允许首轮完成或一次反馈恢复。98/98 自动化、dry-run 和三个 Flash/high 单次真实基线均通过，总成本 `$0.0045356472`，无 Provider 错误。
 - **2026-07-16：** 完成长工具结果分页与搜索。`/tool [id] page <n>` 每页 12 行，`/tool [id] find <text>` 最多展示 10 条大小写不敏感命中；Pi 截断 Bash 结果通过 `O_NOFOLLOW` 流式读取受限 `pi-bash` 临时文件，并支持 Ctrl+C 独立取消，不复制执行/截断逻辑。80×24、100×30、越界、symlink、取消和敏感值回归纳入 98 项自动化。

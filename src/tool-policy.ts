@@ -33,7 +33,7 @@ export interface ToolPolicy {
   evaluate(toolName: string, input: Record<string, unknown>): Promise<ToolPolicyDecision>;
 }
 
-const READ_ONLY_TOOLS = ["read", "ls", "grep"] as const;
+const READ_ONLY_TOOLS = ["read", "ls", "grep", "diagnostics"] as const;
 const SUPPORTED_TOOLS = [...READ_ONLY_TOOLS, "write", "edit", "bash"] as const;
 const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
 const SENSITIVE_DIRECTORIES = new Set([".ssh", ".aws", ".gnupg", ".kube", ".secrets"]);

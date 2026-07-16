@@ -75,7 +75,7 @@ class FakeSession implements InteractiveSession {
   steering: string[] = [];
   aborts = 0;
   reloads = 0;
-  activeTools = ["read", "ls", "grep", "write", "edit", "bash"];
+  activeTools = ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"];
   private listener: ((event: AgentSessionEvent) => void) | undefined;
 
   constructor(model: SelectedModel) {
@@ -176,7 +176,7 @@ function createSnapshot(): ContextSnapshot {
     projectResourcesEnabled: true,
     systemPromptCharacters: 120,
     estimatedSystemPromptTokens: 30,
-    activeTools: ["read", "ls", "grep", "write", "edit", "bash"],
+    activeTools: ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"],
     agentsFiles: [{ name: "AGENTS.md", path: joinForTest("AGENTS.md"), scope: "project", characters: 42 }],
     skills: [{ name: "review", path: joinForTest(".pi/skills/review/SKILL.md"), scope: "project", description: "Review code", modelInvocable: true }],
     prompts: [{ name: "fix", path: joinForTest(".pi/prompts/fix.md"), scope: "project", description: "Fix prompt", characters: 20 }],
@@ -299,7 +299,7 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
       await session.reload();
     },
     setAgentMode: (agentMode) => {
-      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep"] : ["read", "ls", "grep", "write", "edit", "bash"];
+      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep", "diagnostics"] : ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"];
       snapshot.activeTools = [...session.activeTools];
     },
     getGitStatus: async () => ({ available: true, status: "" }),
@@ -342,12 +342,12 @@ test("runs three turns, folds reasoning, handles approval, and exits in an 80x24
 
   terminal.type("/mode plan");
   await flush();
-  assert.deepEqual(session.activeTools, ["read", "ls", "grep"]);
-  assert.match(plainTerminalOutput(terminal), /agent mode changed to plan; active tools: read, ls, grep/);
+  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "diagnostics"]);
+  assert.match(plainTerminalOutput(terminal), /agent mode changed to plan; active tools: read, ls, grep, diagnostics/);
 
   terminal.type("/mode build");
   await flush();
-  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "write", "edit", "bash"]);
+  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"]);
 
   terminal.type("/model deepseek-v4-pro");
   await flush();
@@ -701,7 +701,7 @@ test("gates project context trust and persists safe interactive preferences", as
     getContextSnapshot: () => snapshot,
     setProjectResourcesEnabled: async (enabled) => { snapshot.projectResourcesEnabled = enabled; },
     setAgentMode: (agentMode) => {
-      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep"] : ["read", "ls", "grep", "write", "edit", "bash"];
+      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep", "diagnostics"] : ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"];
     },
     getGitStatus: async () => ({ available: true, status: "" }),
   });
@@ -1068,7 +1068,7 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
     getContextSnapshot: () => snapshot,
     setProjectResourcesEnabled: async (enabled) => { snapshot.projectResourcesEnabled = enabled; },
     setAgentMode: (agentMode) => {
-      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep"] : ["read", "ls", "grep", "write", "edit", "bash"];
+      session.activeTools = agentMode === "plan" ? ["read", "ls", "grep", "diagnostics"] : ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"];
     },
     getGitStatus: async () => ({ available: false, status: "" }),
   });
@@ -1078,7 +1078,7 @@ test("queues steering while streaming and Ctrl+C aborts the active run", async (
   session.isStreaming = true;
   terminal.type("/mode plan");
   await flush();
-  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "write", "edit", "bash"]);
+  assert.deepEqual(session.activeTools, ["read", "ls", "grep", "diagnostics", "write", "edit", "bash"]);
   assert.match(plainTerminalOutput(terminal), /agent mode cannot be changed during an active operation/);
 
   terminal.type("adjust the plan");
