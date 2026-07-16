@@ -34,6 +34,19 @@ export interface ToolPolicy {
 const READ_ONLY_TOOLS = ["read", "ls", "grep"] as const;
 const SUPPORTED_TOOLS = [...READ_ONLY_TOOLS, "write", "edit", "bash"] as const;
 const MUTATING_TOOLS = new Set(["write", "edit", "bash"]);
+const SENSITIVE_DIRECTORIES = new Set([".ssh", ".aws", ".gnupg", ".kube", ".secrets"]);
+const SENSITIVE_FILES = new Set([
+  ".envrc",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  "auth.json",
+  "credentials.json",
+  "service-account.json",
+  "service_account.json",
+  "secrets.json",
+]);
+const PRIVATE_KEY_FILES = new Set(["id_dsa", "id_ecdsa", "id_ed25519", "id_rsa"]);
 const MAX_PREVIEW_LENGTH = 4000;
 
 function isInside(root: string, target: string): boolean {
@@ -55,6 +68,29 @@ async function findExistingAncestor(path: string): Promise<string> {
   }
 }
 
+function sensitivePathLabel(path: string): string | undefined {
+  const parts = path.replaceAll("\\", "/").split("/").filter((part) => part !== "" && part !== ".");
+  const normalized = parts.map((part) => part.toLowerCase());
+  const directory = normalized.find((part) => SENSITIVE_DIRECTORIES.has(part));
+  if (directory) return directory;
+
+  const fileName = normalized.at(-1);
+  if (!fileName) return undefined;
+  if (/^\.env(?:\.|$)/.test(fileName) && !/\.(?:example|sample|template)$/.test(fileName)) return fileName;
+  if (SENSITIVE_FILES.has(fileName) || PRIVATE_KEY_FILES.has(fileName)) return fileName;
+  return undefined;
+}
+
+function getSensitiveCommandReason(command: string): string | undefined {
+  const candidates = command.match(/[A-Za-z0-9_./${}~-]+/g) ?? [];
+  for (const candidate of candidates) {
+    const path = candidate.replace(/\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/g, "");
+    const label = sensitivePathLabel(path);
+    if (label) return `Command references protected sensitive path: ${label}`;
+  }
+  return undefined;
+}
+
 async function validateWorkspacePath(cwd: string, inputPath: unknown): Promise<ToolPolicyDecision> {
   if (typeof inputPath !== "string" || inputPath.trim() === "") {
     return { allowed: false, reason: "Tool path must be a non-empty string" };
@@ -64,6 +100,11 @@ async function validateWorkspacePath(cwd: string, inputPath: unknown): Promise<T
   const target = resolve(root, inputPath);
   if (!isInside(root, target)) {
     return { allowed: false, reason: `Path is outside the workspace: ${inputPath}` };
+  }
+
+  const sensitive = sensitivePathLabel(relative(root, target));
+  if (sensitive) {
+    return { allowed: false, reason: `Sensitive path is protected: ${sensitive}` };
   }
 
   const existingTargetOrAncestor = await findExistingAncestor(target);
@@ -238,6 +279,8 @@ export function createToolPolicy(options: {
           request = await buildEditApproval(options.cwd, input);
         } else {
           if (typeof input.command !== "string") return { allowed: false, reason: "Invalid bash arguments" };
+          const sensitiveReason = getSensitiveCommandReason(input.command);
+          if (sensitiveReason) return { allowed: false, reason: sensitiveReason };
           const blockedReason = getBlockedCommandReason(input.command);
           if (blockedReason) return { allowed: false, reason: blockedReason };
           request = buildBashApproval(options.cwd, input);

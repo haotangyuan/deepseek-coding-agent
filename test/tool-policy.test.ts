@@ -103,6 +103,60 @@ test("blocks paths that escape through a symlink", async () => {
   });
 });
 
+test("blocks sensitive files and directories while allowing public templates", async () => {
+  await withWorkspace(async (workspace) => {
+    await writeFile(join(workspace, ".env"), "SECRET_SENTINEL=must-not-be-read\n");
+    let approvals = 0;
+    const policy = createToolPolicy({
+      cwd: workspace,
+      mode: "ask",
+      approve: async () => {
+        approvals += 1;
+        return true;
+      },
+    });
+
+    for (const [toolName, input] of [
+      ["read", { path: ".env" }],
+      ["grep", { pattern: "SENTINEL", path: ".env.local" }],
+      ["write", { path: "config/credentials.json", content: "{}\n" }],
+      ["read", { path: "config/secrets.json" }],
+      ["edit", { path: ".ssh/id_ed25519", edits: [] }],
+      ["ls", { path: ".aws" }],
+    ] as const) {
+      const decision = await policy.evaluate(toolName, input);
+      assert.equal(decision.allowed, false);
+      assert.match(decision.reason ?? "", /protected/);
+    }
+
+    assert.deepEqual(await policy.evaluate("read", { path: ".env.example" }), { allowed: true });
+    assert.deepEqual(await policy.evaluate("write", { path: ".env.production.template", content: "KEY=\n" }), { allowed: true });
+    assert.equal(approvals, 1);
+  });
+});
+
+test("blocks obvious sensitive path references in bash before approval", async () => {
+  await withWorkspace(async (workspace) => {
+    let asked = false;
+    const policy = createToolPolicy({
+      cwd: workspace,
+      mode: "ask",
+      approve: async () => {
+        asked = true;
+        return true;
+      },
+    });
+
+    for (const command of ["cat .env", "sed -n '1p' ./.env.local", "ls $HOME/.ssh", "cat config/credentials.json"]) {
+      const decision = await policy.evaluate("bash", { command });
+      assert.equal(decision.allowed, false);
+      assert.match(decision.reason ?? "", /protected sensitive path/);
+    }
+    assert.equal(asked, false);
+    assert.equal((await policy.evaluate("bash", { command: "cat .env.example" })).allowed, true);
+  });
+});
+
 test("auto-read and deny fail closed for disallowed tools", async () => {
   await withWorkspace(async (workspace) => {
     const autoRead = createToolPolicy({ cwd: workspace, mode: "auto-read", approve: rejectApproval });

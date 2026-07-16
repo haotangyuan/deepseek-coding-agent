@@ -19,6 +19,7 @@
 - 支持 `ask`、`auto-read`、`deny` 三种工具审批模式；默认 `ask`。
 - 支持显式 `plan`/`build` Agent 模式；Plan 从 Pi 活动工具集合移除 write/edit/bash，Build 恢复审批控制的完整工具集，默认 `build + ask`。
 - 直接复用 Pi 的 read/ls/grep 做受限仓库探索；read/ls/grep/write/edit 受工作区路径和 symlink 边界保护，write/edit/bash 在执行前展示并确认。
+- 默认保护 `.env`、常见凭据目录/文件和 SSH 私钥名；公开的 `.env.example/.sample/.template` 仍可读写，明显 Bash 敏感路径字面量在审批前阻断。
 - 成功执行修改类工具后展示 Git 工作区摘要，不自动提交。
 - 每轮 settled 后展示 Completion Evidence：明确记录 write/edit 文件、实际 diff 查看、可识别验证结果和错误事实；不自动追加付费模型轮次，也不把未知命令猜成测试。
 - Cache Inspector 展示本轮和 Session 累计 cache hit/miss/rate；`/cache` 可随时重看，只有相邻足量轮次下降至少 20pp 才提示事实型告警。
@@ -170,6 +171,8 @@ npm start -- --approval deny "Explain how to approach this task"
 
 非交互环境中的 `ask` 会默认拒绝高影响工具。明显破坏性的 Bash 命令会在询问前直接阻断。审批不是沙箱：批准后的 Bash 仍拥有本地进程权限。完整边界见 [docs/tool-safety.md](docs/tool-safety.md)。
 
+敏感路径保护是默认防泄漏规则，不是完整 Shell 解析器。间接脚本、运行时拼接和已批准程序仍可能访问本机权限范围内的文件；完整规则与误判边界见 [docs/sensitive-paths.md](docs/sensitive-paths.md)。
+
 ## 开发验证
 
 ```bash
@@ -208,7 +211,7 @@ npm run eval -- --live --task all --model deepseek-v4-flash --thinking high --ru
 - Pi 上游源码研究和贡献在相邻的 `pi` Fork 中进行。
 - 本地 API 和破坏性操作实验在相邻的 `playground/pi-test` 中进行。
 
-整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
+整体产品与技术规划见 [docs/product-roadmap.md](docs/product-roadmap.md)，Plan/Build 设计见 [docs/plan-build-mode.md](docs/plan-build-mode.md)，敏感路径规则见 [docs/sensitive-paths.md](docs/sensitive-paths.md)，DeepSeek 评测见 [docs/deepseek-evaluation.md](docs/deepseek-evaluation.md)，持久会话设计见 [docs/persistent-sessions.md](docs/persistent-sessions.md)，上下文资源设计见 [docs/context-resources.md](docs/context-resources.md)，交互终端设计见 [docs/interactive-tui.md](docs/interactive-tui.md)，工具安全设计见 [docs/tool-safety.md](docs/tool-safety.md)，Pi SDK 升级记录见 [docs/pi-compatibility.md](docs/pi-compatibility.md)，源码学习顺序见 [docs/learning-roadmap.md](docs/learning-roadmap.md)。
 
 ## License
 
